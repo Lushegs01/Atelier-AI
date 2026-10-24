@@ -2170,12 +2170,19 @@ tr:last-child td {
     color: var(--primary);
   }
   .mobile-nav .create-tab {
+    min-width: 60px;
     background: var(--primary);
     color: white;
     border-radius: 12px;
     padding: 9px 18px;
     margin-top: -20px;
     border: 5px solid var(--background);
+  }
+  .mobile-nav .create-tab svg {
+    min-width: 20px;
+    min-height: 20px;
+    flex-shrink: 0;
+    stroke: #fff;
   }
   .studio-step {
     padding: 20px;

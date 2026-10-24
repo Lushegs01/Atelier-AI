@@ -258,9 +258,10 @@ function Shell({ children }: { children: ReactNode }) {
             href={href}
             key={href}
             className={`${pathname === href ? "active" : ""} ${label === "Create" ? "create-tab" : ""}`}
+            aria-label={label === "Create" ? "Create in studio" : undefined}
           >
             <Icon size={20} strokeWidth={1.6} />
-            {label !== "Create" && <span>{label}</span>}
+            {label === "Create" ? <span className="sr-only">Create</span> : <span>{label}</span>}
           </Link>
         ))}
       </nav>
