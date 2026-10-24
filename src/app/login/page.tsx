@@ -1,0 +1,5 @@
+import { AuthPage } from "@/features/auth/auth-page";
+export const dynamic = "force-dynamic";
+export default function Page() {
+  return <AuthPage mode="login" />;
+}

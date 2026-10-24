@@ -1,0 +1,18 @@
+# Outstanding external requirements
+
+No accounts, keys or deployment authorization were supplied with this task. The following remain mandatory before launch:
+
+| Area          | Required configuration and evidence                                                                                                                                                                  |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Supabase      | Project URL/public key/service credential; migration in staging; verified email/SMTP; redirect allowlist; signup abuse controls; hosted RLS/storage acceptance using two organizations and all roles |
+| Storage       | Private `private-media` bucket; authorized signed downloads; object cleanup/restore; abandoned-upload and corrupt-file tests in hosted storage                                                       |
+| FASHN         | API account/key and funded test budget; permission/retention review; real photo, try-on and video acceptance; valid outputs, copy, playback, failure and cost evidence                               |
+| Inngest       | Event/signing keys; deployed endpoint registration; verified cron activation, crash/retry/outbox behavior, queue monitoring and alerts                                                               |
+| Paystack      | Merchant/test account, test keys and webhook endpoint; verified checkout + duplicate webhook settlement; controlled refund test; production account approval before live keys                        |
+| Pricing       | Review disabled draft packages/rules; supply provider purchase cost/discount, FX, fees and margin; enable only approved variants                                                                     |
+| Hosting       | Repository remote, staging host, domain, TLS, secrets, regional configuration, execution/body-size limits, operational ownership and explicit deployment authorization                               |
+| Monitoring    | Optional Sentry DSN and actual alert destination; verify scrubbing, queue/stuck jobs, failed deletions and pending financial reconciliation                                                          |
+| Legal/support | Legal entity, support email, privacy contact, applicable retention and dispute/refund terms; qualified legal review; consent/provider terms                                                          |
+| Recovery      | Managed backup/PITR plan, separate object backups, encrypted exports, restore drill, documented RTO/RPO based on measurement                                                                         |
+
+Operational limitations: initial image pricing supports one balanced 1K image per request; video supports documented 5/10 second variants. Preview/Experimental provider lifecycles preclude an uninterrupted-service promise. Ambiguous paid submissions require manual reconciliation. Account deletion and data exports require staffed operator review. No real load testing, mobile Safari installation, hosted concurrent-connection testing or live external acceptance has been completed.
