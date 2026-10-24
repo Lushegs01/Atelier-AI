@@ -42,6 +42,8 @@ The Inngest SDK originally brought a Zod version affected by the current audit a
 
 No Docker runtime was available, so `supabase start`, a full local Supabase stack, the container build and managed migration application were not run. No independent-connection PostgreSQL race test, production load test, device installability audit or formal accessibility certification was performed.
 
+The final production server was started locally on port 3002: `/` and `/api/health` returned 200; `/api/ready`, `/app` and `/admin` returned the expected 503 with integrations unconfigured. Both owned preview servers were stopped after verification. After the mobile navigation accessibility polish, the production build and two focused mobile route checks also passed. Final source commit: `7dd19d9` (the verification-note commit may follow it).
+
 ## Exact next actions
 
 1. Create an isolated Supabase staging project, apply the reviewed migration and configure email confirmation, SMTP, redirect origins and private storage.
