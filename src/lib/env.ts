@@ -4,6 +4,10 @@ const flag = z
   .enum(["true", "false"])
   .default("false")
   .transform((v) => v === "true");
+const space = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,95}\/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/)
+  .optional();
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   NEXT_PUBLIC_APP_URL: z.url().default("http://localhost:3000"),
@@ -11,7 +15,11 @@ const schema = z.object({
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(20).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
   FASHN_API_KEY: z.string().min(8).optional(),
-  AI_PROVIDER: z.enum(["qwen", "fashn"]).default("qwen"),
+  AI_PROVIDER: z.enum(["qwen", "fashn", "huggingface"]).default("qwen"),
+  HF_TOKEN: z.string().min(8).optional(),
+  HF_PHOTO_SPACE: space,
+  HF_TRY_ON_SPACE: space,
+  HF_VIDEO_SPACE: space,
   QWEN_API_URL: z.url().optional(),
   QWEN_API_KEY: z.string().min(32).optional(),
   QWEN_ALLOW_INSECURE_LOCAL: flag,
@@ -66,6 +74,7 @@ export function environmentReadiness(input: Record<string, string | undefined> =
   const extra: string[] = [];
   const aiEnabled = env.ENABLE_PHOTO_GENERATION || env.ENABLE_TRY_ON || env.ENABLE_VIDEO_GENERATION;
   if (aiEnabled && env.AI_PROVIDER === "fashn" && !env.FASHN_API_KEY) extra.push("FASHN_API_KEY");
+  if (aiEnabled && env.AI_PROVIDER === "huggingface" && !env.HF_TOKEN) extra.push("HF_TOKEN");
   if (aiEnabled && env.AI_PROVIDER === "qwen") {
     if (!env.QWEN_API_URL) extra.push("QWEN_API_URL");
     if (!env.QWEN_API_KEY) extra.push("QWEN_API_KEY");

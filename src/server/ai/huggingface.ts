@@ -2,7 +2,6 @@ import "server-only";
 import { z } from "zod";
 import {
   FashionProvider,
-  GarmentContext,
   GenerationContext,
   GenerationOperation,
   ImageOptions,
@@ -17,6 +16,7 @@ import {
   videoOptionsSchema,
   tryOnOptionsSchema,
 } from "./contracts";
+import { validateProviderOutputUrl } from "@/server/storage/validation";
 
 /**
  * Public ZeroGPU Spaces whose Gradio signatures were verified on 25 October 2026. Requests are
@@ -26,6 +26,12 @@ export const DEFAULT_HF_SPACES: Record<GenerationOperation, string> = {
   photo: "multimodalart/Qwen-Image-Edit-Fast",
   try_on: "franciszzj/Leffa",
   video: "zerogpu-aoti/wan2-2-fp8da-aoti-faster",
+};
+/** Stable model ids for pricing and job pinning; a duplicated Space serves the same model. */
+export const HF_MODELS: Record<GenerationOperation, string> = {
+  photo: "Qwen/Qwen-Image-Edit",
+  try_on: "franciszzj/Leffa",
+  video: "Wan-AI/Wan2.2-I2V-A14B",
 };
 const SPACE_ENV: Record<GenerationOperation, string> = {
   photo: "HF_PHOTO_SPACE",
@@ -79,36 +85,53 @@ export function huggingFaceOutputHosts(): string[] {
   });
 }
 
+/** Outputs must come from a configured Space; a private duplicate serves files only to its owner. */
+export function huggingFaceOutputRequest(value: string): {
+  url: URL;
+  headers: Record<string, string> | undefined;
+} {
+  return {
+    url: validateProviderOutputUrl(value, huggingFaceOutputHosts()),
+    headers: process.env.HF_TOKEN ? { Authorization: `Bearer ${process.env.HF_TOKEN}` } : undefined,
+  };
+}
+
 export function getHuggingFaceCapabilities(): ProviderCapability[] {
   const configured = Boolean(process.env.HF_TOKEN);
   return [
     {
+      provider: "huggingface",
       operation: "photo",
-      model: huggingFaceSpace("photo"),
+      model: HF_MODELS.photo,
       lifecycle: "Experimental",
       enabled: configured && process.env.ENABLE_PHOTO_GENERATION === "true",
       minInputDimension: 15,
       supportedViews: ["front", "mannequin", "hanger", "flat-lay"],
       supportedResolutions: ["1k"],
+      notes: `Free Hugging Face Space ${huggingFaceSpace("photo")}. Review garment details before publication.`,
     },
     {
+      provider: "huggingface",
       operation: "try_on",
-      model: huggingFaceSpace("try_on"),
+      model: HF_MODELS.try_on,
       lifecycle: "Experimental",
       enabled: configured && process.env.ENABLE_TRY_ON === "true",
       minInputDimension: 15,
       supportedViews: ["front", "mannequin", "hanger", "flat-lay"],
       supportedResolutions: ["1k"],
+      notes: `Free Hugging Face Space ${huggingFaceSpace("try_on")}. A visualization, not a fit guarantee.`,
     },
     {
+      provider: "huggingface",
       operation: "video",
-      model: huggingFaceSpace("video"),
+      model: HF_MODELS.video,
       lifecycle: "Experimental",
       enabled: configured && process.env.ENABLE_VIDEO_GENERATION === "true",
       minInputDimension: 301,
       supportedViews: ["generated_image", "front"],
       supportedResolutions: ["480p"],
       supportedDurations: [5],
+      notes: `Free Hugging Face Space ${huggingFaceSpace("video")}. 5-second 480p clips only.`,
     },
   ];
 }
@@ -134,7 +157,6 @@ function leffaGarment(category?: string): [string, string] {
 }
 
 /**
- * Standalone reference adapter; the application registry does not enable Hugging Face Spaces.
  * Free Hugging Face ZeroGPU Spaces called through Gradio's documented `/call` API. A job keeps
  * running after submission and holds its result until one reader collects it. Closing a result
  * stream early cancels the job, so status reads wait for the final event instead of polling.
@@ -184,13 +206,11 @@ export class HuggingFaceProvider implements FashionProvider {
     product: string,
     person: string,
     raw: TryOnOptions,
-    context?: GenerationContext | GarmentContext,
+    context?: GenerationContext,
   ): Promise<{ id: string }> {
     const options = tryOnOptionsSchema.parse(raw);
     requireSupported("try_on", options);
-    const [modelType, garmentType] = leffaGarment(
-      context && "category" in context ? context.category : undefined,
-    );
+    const [modelType, garmentType] = leffaGarment(context?.garmentCategory);
     return this.submit("try_on", [
       gradioFile(person),
       gradioFile(product),

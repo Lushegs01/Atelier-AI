@@ -1,5 +1,6 @@
 import "server-only";
 import { getQwenOutputRequest } from "@/server/ai/endpoint";
+import { huggingFaceOutputRequest } from "@/server/ai/huggingface";
 import { requestQwenPredictionDeletion } from "@/server/ai/cleanup";
 import { getConsentVersion } from "@/server/services/try-on";
 import { createHash, randomUUID } from "node:crypto";
@@ -247,7 +248,7 @@ async function assertCustomerSigningConsent(
     session.deleted_at ||
     !session.expires_at ||
     new Date(session.expires_at).getTime() <= Date.now() ||
-    (session.provider !== "qwen" && session.provider !== "fashn")
+    !["qwen", "fashn", "huggingface"].includes(session.provider)
   )
     throw new MediaValidationError("Customer access has expired or been withdrawn.");
   const { data: consent, error: consentError } = await admin
@@ -330,7 +331,7 @@ export async function transferProviderOutput(input: {
   index: number;
   url: string;
   isVideo: boolean;
-  provider?: "fashn" | "qwen";
+  provider?: "fashn" | "qwen" | "huggingface";
   providerReference?: string;
   garmentId?: string;
   actorId?: string | null;
@@ -349,7 +350,9 @@ export async function transferProviderOutput(input: {
   const transfer =
     input.provider === "qwen"
       ? getQwenOutputRequest(input.url, input.providerReference || "")
-      : { url: validateProviderOutputUrl(input.url), headers: undefined };
+      : input.provider === "huggingface"
+        ? huggingFaceOutputRequest(input.url)
+        : { url: validateProviderOutputUrl(input.url), headers: undefined };
   if (input.provider === "qwen" && input.isVideo)
     throw new MediaValidationError("Qwen cannot return a fashion video.");
   const url = transfer.url;

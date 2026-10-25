@@ -1,6 +1,6 @@
 # Imported Hugging Face branch report — 24 October 2026
 
-This historical report was preserved from remote commit `f9a213c`, merged through `3cb07e0`. Its Hugging Face generation claim was not rerun during the Qwen work and is not evidence of Qwen inference. The application now selects Qwen by default; the standalone Hugging Face adapter remains inactive. Use [Qwen verification](QWEN-VERIFICATION.md) for the current integration and [deployment](DEPLOYMENT.md) for configuration. The original branch report follows below.
+This historical report was preserved from remote commit `f9a213c`, merged through `3cb07e0`. Its Hugging Face generation claim was not rerun during the Qwen work and is not evidence of Qwen inference. The application selects Qwen by default; the Hugging Face adapter is available again as the explicit `AI_PROVIDER=huggingface` option after migration `202610250002_huggingface_provider.sql`. Use [Qwen verification](QWEN-VERIFICATION.md) for the current integration and [deployment](DEPLOYMENT.md) for configuration. The original branch report follows below.
 
 This report records local checks performed for the initial implementation. The application has not been deployed. Real AI predictions, payment settlement, hosted Supabase authentication/storage and managed Inngest execution remain unverified because external accounts/credentials were not supplied.
 

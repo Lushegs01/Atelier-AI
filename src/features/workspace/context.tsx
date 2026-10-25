@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { PublicProvider, WorkspaceCapability } from "./provider";
+import type { PublicProvider, PublicProviderId, WorkspaceCapability } from "./provider";
 
 export interface Garment {
   id: string;
@@ -44,7 +44,7 @@ export interface Job {
   error_message?: string;
   options?: Record<string, unknown>;
   provider_model?: string;
-  provider?: "qwen" | "fashn";
+  provider?: PublicProviderId;
 }
 export interface Output {
   id: string;

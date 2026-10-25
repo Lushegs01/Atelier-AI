@@ -32,7 +32,8 @@ async function reserve(
     source?: string | null;
     session?: string | null;
     garment?: string;
-    provider?: "qwen" | "fashn";
+    provider?: "qwen" | "fashn" | "huggingface";
+    options?: Record<string, unknown>;
   } = {},
 ) {
   const result = await db.query<{
@@ -54,9 +55,10 @@ async function reserve(
       overrides.garment ?? ids.garmentA,
       overrides.source === undefined ? ids.assetA : overrides.source,
       [ids.assetA],
-      overrides.provider === "qwen"
-        ? { resolution: "1k", quality: "balanced", outputFormat: "png", numImages: 1 }
-        : {},
+      overrides.options ??
+        (overrides.provider === "qwen"
+          ? { resolution: "1k", quality: "balanced", outputFormat: "png", numImages: 1 }
+          : {}),
       overrides.key ?? "test-reservation-001",
       overrides.session ?? null,
       overrides.provider ?? "fashn",
@@ -694,6 +696,84 @@ describe("provider-aware prices, immutable jobs and guest permissions", () => {
         session: ids.session,
       }),
     ).rejects.toThrow(/consent required/i);
+  });
+});
+
+describe("free Hugging Face provider", () => {
+  const enableHuggingFace = () =>
+    db.exec(
+      "update generation_price_rules set enabled=true,reviewed_at=now(),credits=9 where provider='huggingface'",
+    );
+  it("adds disabled Hugging Face prices without FASHN credits or GPU cost", async () => {
+    const rules = await db.query<{
+      operation: string;
+      option_key: string;
+      provider_model: string;
+      enabled: boolean;
+      provider_credits_milli: number;
+    }>(
+      "select operation,option_key,provider_model,enabled,provider_credits_milli from generation_price_rules where provider='huggingface' order by operation",
+    );
+    expect(rules.rows).toEqual([
+      expect.objectContaining({ operation: "photo", option_key: "default", enabled: false }),
+      expect.objectContaining({ operation: "try_on", option_key: "default", enabled: false }),
+      expect.objectContaining({ operation: "video", option_key: "5:480p", enabled: false }),
+    ]);
+    expect(rules.rows.every((rule) => rule.provider_credits_milli === 0)).toBe(true);
+  });
+  it("reserves a reviewed Hugging Face price pinned to its provider and model", async () => {
+    await enableHuggingFace();
+    const job = await reserve({ provider: "huggingface", key: "hf-photo-reservation" });
+    expect(job).toMatchObject({
+      provider: "huggingface",
+      provider_model: "Qwen/Qwen-Image-Edit",
+      estimated_credits: 9,
+      provider_credits_milli: 0,
+    });
+    expect(await account()).toEqual({ available: 91, reserved: 9 });
+  });
+  it("rejects image options the Spaces cannot honour before reserving credits", async () => {
+    await enableHuggingFace();
+    await expect(
+      reserve({ provider: "huggingface", key: "hf-photo-4k", options: { resolution: "4k" } }),
+    ).rejects.toThrow(/options unsupported/i);
+  });
+  it("allows only the 1K image and 5-second 480p video price rows", async () => {
+    await expect(
+      db.exec(
+        "insert into generation_price_rules(provider,operation,option_key,credits,provider_model,provider_credits_milli) values('huggingface','video','10:1080p',30,'Wan-AI/Wan2.2-I2V-A14B',0)",
+      ),
+    ).rejects.toThrow(/huggingface_options/i);
+  });
+  it("requires the Hugging Face consent version for a customer invitation", async () => {
+    await enableHuggingFace();
+    await db.query(
+      "insert into try_on_sessions(id,organization_id,garment_id,provider,provider_model,token_hash,expires_at) values($1,$2,$3,'huggingface','franciszzj/Leffa',$4,now()+interval '1 day')",
+      [ids.session, ids.orgA, ids.garmentA, "d".repeat(64)],
+    );
+    await db.query(
+      "insert into consents(organization_id,try_on_session_id,version) values($1,$2,'2026-10-25-qwen-v1')",
+      [ids.orgA, ids.session],
+    );
+    const guest = {
+      provider: "huggingface" as const,
+      actor: null,
+      operation: "try_on",
+      source: ids.customerPhoto,
+      session: ids.session,
+      key: "hf-guest-try-on",
+    };
+    await db.exec("savepoint before_hf_consent");
+    await expect(reserve(guest)).rejects.toThrow(/consent required/i);
+    await db.exec("rollback to savepoint before_hf_consent");
+    await db.query(
+      "insert into consents(organization_id,try_on_session_id,version) values($1,$2,'2026-10-25-huggingface-v1')",
+      [ids.orgA, ids.session],
+    );
+    expect(await reserve(guest)).toMatchObject({
+      provider: "huggingface",
+      provider_model: "franciszzj/Leffa",
+    });
   });
 });
 

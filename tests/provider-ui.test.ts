@@ -47,6 +47,9 @@ describe("provider-aware interface contract", () => {
       "not a validated fitting system",
     );
     expect(providerDisclosure({ id: "fashn", label: "FASHN" })).toContain("third-party");
+    expect(providerDisclosure({ id: "huggingface", label: "Hugging Face" })).toContain(
+      "Hugging Face Spaces",
+    );
     expect(providerDisclosure()).toContain("must be identified");
   });
 });

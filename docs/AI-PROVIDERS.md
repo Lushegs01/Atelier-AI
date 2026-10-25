@@ -8,12 +8,31 @@ The default backend is operator-hosted `Qwen/Qwen-Image-Edit-2511`. FASHN remain
 | ------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------- |
 | Qwen Image Edit (default) | Experimental garment-guided image editing | Separately enabled experimental multi-image editing, not a validated fitting model | Unsupported regardless of feature flags |
 | FASHN (optional)          | `product-to-model`, Preview               | `tryon-max`, Preview                                                               | `image-to-video`, Experimental          |
+| Hugging Face (free)       | Experimental, Qwen-Image-Edit Space       | Experimental, Leffa Space                                                          | Experimental, 5-second 480p Wan 2.2     |
 
-All flags default false. A backend, its operation flag and its reviewed provider-specific price rule must be enabled before spending credits. New work follows `AI_PROVIDER=qwen|fashn`; existing jobs and invitations preserve their selected provider/model. Missing Qwen credentials never route a photograph to FASHN. The UI identifies the actual pinned provider before customer consent.
+All flags default false. A backend, its operation flag and its reviewed provider-specific price rule must be enabled before spending credits. New work follows `AI_PROVIDER=qwen|fashn|huggingface`; existing jobs and invitations preserve their selected provider/model. Missing Qwen credentials never route a photograph to FASHN. The UI identifies the actual pinned provider before customer consent.
 
 Qwen is a general image editor, not a specialized garment-fitting system with demonstrated parity. It may alter construction, print, embellishment, body, pose or likeness. Compare every output with the original. Customer photographs cannot be used for campaign animation or unrelated reuse. No claim of accurate fit, exact identity preservation or measured fidelity is made.
 
 The [official model card](https://huggingface.co/Qwen/Qwen-Image-Edit-2511) publishes Apache-2.0 weights and multi-image editing through `QwenImageEditPlusPipeline`. That license does not include GPU compute, hosting, storage or model-quality guarantees. Review model/dependency licenses, input rights and infrastructure terms for release.
+
+## Free Hugging Face Spaces
+
+`AI_PROVIDER=huggingface` runs jobs on public ZeroGPU Spaces with a free Hugging Face **read** token, without a GPU of your own. It is suited to development, demos and low volume.
+
+| Operation              | Default Space                           | Pinned model             | Limits                              |
+| ---------------------- | --------------------------------------- | ------------------------ | ----------------------------------- |
+| Fashion photographs    | `multimodalart/Qwen-Image-Edit-Fast`    | `Qwen/Qwen-Image-Edit`   | 1K; shape follows the garment photo |
+| Customer visualization | `franciszzj/Leffa`                      | `franciszzj/Leffa`       | 1K (768 × 1024)                     |
+| Fashion video          | `zerogpu-aoti/wan2-2-fp8da-aoti-faster` | `Wan-AI/Wan2.2-I2V-A14B` | 5 seconds at 480p                   |
+
+1. Create a read-only token at <https://huggingface.co/settings/tokens>; it is sent to every Space the app calls, so never use a write token. Set `AI_PROVIDER=huggingface` and `HF_TOKEN` on the web host, plus the `ENABLE_*` flags you want, then redeploy.
+2. Apply migration `202610250002_huggingface_provider.sql` (`npm run db:migrate`). It allows the provider in jobs, prices and invitations and adds three **disabled** price rows.
+3. Review and enable those rows from **Admin → Pricing**. Their FASHN credit and GPU cost fields are zero; set the customer price you want.
+
+A free account gets five ZeroGPU minutes a day; PRO gets 40 ([quotas](https://huggingface.co/docs/hub/spaces-zerogpu)). That is roughly ten try-ons, a few photos or two to three videos a day. A job that runs out of quota fails and releases its credits. Status reads hold Gradio's result stream open for up to 85 seconds, because closing it early cancels the Space job; slower jobs fail with `provider_timeout`. A lost submission is resent, since a duplicate free job costs only quota.
+
+Public Spaces run code chosen by their owners and can change or sleep. Before real customer photographs, duplicate each Space privately into your own account (free accounts can host two ZeroGPU Spaces) and point `HF_PHOTO_SPACE`, `HF_TRY_ON_SPACE` and `HF_VIDEO_SPACE` at the copies; output downloads send `HF_TOKEN`. A duplicate must keep the same Gradio API, and jobs stay pinned to the models above. Guest consent names Hugging Face and records version `2026-10-25-huggingface-v1`.
 
 ## Provision Qwen
 

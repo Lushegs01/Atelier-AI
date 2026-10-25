@@ -215,8 +215,9 @@ export default function AdminPage({ resource }: { resource: string }) {
               Provider availability follows the selected backend and deployment flags. Qwen Image
               Edit offers experimental still images and separately enabled customer visualization;
               it has no video engine. Optional FASHN features retain their Preview or Experimental
-              lifecycle. Existing jobs keep their original provider. Verify capabilities and costs
-              after a reviewed configuration change.
+              lifecycle. Free Hugging Face Spaces offer experimental photos, try-on and 5-second
+              480p video within the token’s daily GPU quota. Existing jobs keep their original
+              provider. Verify capabilities and costs after a reviewed configuration change.
             </Notice>
           </div>
         )}

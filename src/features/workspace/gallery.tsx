@@ -18,7 +18,7 @@ import { Badge, Button, Dialog, Empty, Notice, useToast } from "@/components/ui"
 import { useWorkspace, apiRequest, type Job, type Output } from "./context";
 import { PageHeading, SetupNotice, AiDisclosure } from "./common";
 import { dateLabel } from "@/lib/utils";
-import { operationAvailability } from "./provider";
+import { operationAvailability, providerLabel } from "./provider";
 export async function downloadMedia(url: string, name: string) {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error("The download link expired. Refresh the page and try again.");
@@ -427,7 +427,7 @@ export function GenerationDetail({ id }: { id: string }) {
                 job?.provider
                   ? {
                       id: job.provider,
-                      label: job.provider === "qwen" ? "Qwen Image Edit" : "FASHN",
+                      label: providerLabel(job.provider),
                     }
                   : null
               }

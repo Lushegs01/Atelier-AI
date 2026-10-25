@@ -57,8 +57,8 @@ export default function Studio({ video = false }: { video?: boolean }) {
   const [model, setModel] = useState("Adult woman, editorial fashion model");
   const [pose, setPose] = useState("Relaxed standing pose");
   const [ratio, setRatio] = useState("3:4");
-  const [duration, setDuration] = useState("5");
-  const [resolution, setResolution] = useState("1080p");
+  const [durationChoice, setDuration] = useState("5");
+  const [resolutionChoice, setResolution] = useState("1080p");
   const [motion, setMotion] = useState("");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [review, setReview] = useState(false);
@@ -70,6 +70,15 @@ export default function Studio({ video = false }: { video?: boolean }) {
     data.capabilities,
     data.provider,
   );
+  // Offer only the video options the selected provider can honour.
+  const durations = availability.capability?.supportedDurations ?? [5, 10];
+  const resolutions = availability.capability?.supportedResolutions ?? ["480p", "720p", "1080p"];
+  const duration = durations.includes(Number(durationChoice))
+    ? durationChoice
+    : String(durations[0]);
+  const resolution = resolutions.includes(resolutionChoice)
+    ? resolutionChoice
+    : resolutions[resolutions.length - 1];
   const garment = data.garments.find((g) => g.id === garmentId);
   const source = data.outputs.find((o) => o.asset_id === sourceId);
   const sourceGarment = data.garments.find((g) => g.assets?.some((a) => a.id === sourceId));
@@ -306,15 +315,18 @@ export default function Studio({ video = false }: { video?: boolean }) {
                     value={duration}
                     onChange={(e) => setDuration(e.target.value)}
                   >
-                    <option value="5">5 seconds</option>
-                    <option value="10">10 seconds</option>
+                    {durations.map((d) => (
+                      <option key={d} value={d}>
+                        {d} seconds
+                      </option>
+                    ))}
                   </Select>
                   <Select
                     label="Resolution"
                     value={resolution}
                     onChange={(e) => setResolution(e.target.value)}
                   >
-                    {["480p", "720p", "1080p"].map((r) => (
+                    {resolutions.map((r) => (
                       <option key={r}>{r}</option>
                     ))}
                   </Select>

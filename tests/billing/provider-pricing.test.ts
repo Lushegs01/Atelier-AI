@@ -127,4 +127,40 @@ describe("provider-aware billing selection (explicit test doubles)", () => {
     ).toMatchObject({ provider: "fashn", providerModel: "product-to-model", lifecycle: "preview" });
     expect(mock.equalities).toContainEqual(["provider", "fashn"]);
   });
+  it("quotes free Hugging Face video only for the 5-second 480p clip", async () => {
+    vi.stubEnv("AI_PROVIDER", "huggingface");
+    vi.stubEnv("HF_TOKEN", "hf_synthetic-test-token");
+    mock.rule = {
+      ...mock.rule,
+      provider: "huggingface",
+      provider_model: "Wan-AI/Wan2.2-I2V-A14B",
+      credits: 15,
+      estimated_provider_cost_microusd: 0,
+    };
+    expect(
+      await quoteGeneration({
+        organizationId: "workspace-fixture",
+        operation: "video",
+        options: { duration: 5, resolution: "480p" },
+      }),
+    ).toMatchObject({ provider: "huggingface", optionKey: "5:480p", credits: 15 });
+    expect(mock.equalities).toContainEqual(["provider", "huggingface"]);
+    await expect(
+      quoteGeneration({
+        organizationId: "workspace-fixture",
+        operation: "video",
+        options: { duration: 10, resolution: "480p" },
+      }),
+    ).rejects.toMatchObject({ code: "PROVIDER_OPTIONS_UNSUPPORTED" });
+    await expect(
+      reserveGeneration({
+        organizationId: "workspace-fixture",
+        actorId: "actor-fixture",
+        operation: "video",
+        options: { duration: 5, resolution: "1080p" },
+        idempotencyKey: "hf-unsupported-resolution",
+      }),
+    ).rejects.toMatchObject({ code: "PROVIDER_OPTIONS_UNSUPPORTED" });
+    expect(mock.rpc).not.toHaveBeenCalled();
+  });
 });

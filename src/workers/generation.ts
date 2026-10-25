@@ -139,6 +139,16 @@ async function resolveGarmentSource(job: Job): Promise<string> {
   });
 }
 
+async function garmentCategory(job: Job): Promise<string | undefined> {
+  const { data } = await getAdminClient()
+    .from("garments")
+    .select("category")
+    .eq("organization_id", job.organization_id)
+    .eq("id", job.garment_id)
+    .maybeSingle();
+  return typeof data?.category === "string" ? data.category : undefined;
+}
+
 export async function submitGenerationOnce(
   jobId: string,
   organizationId: string,
@@ -175,6 +185,14 @@ export async function submitGenerationOnce(
           );
         }
       }
+    } else if (job.provider === "huggingface") {
+      // A duplicate free Space job only spends GPU quota, so an unknown submission is resent.
+      await updateJob(job.id, {
+        status: "retry_wait",
+        error_code: null,
+        error_message: null,
+        lease_until: null,
+      });
     } else {
       await updateJob(job.id, {
         status: "retry_wait",
@@ -235,7 +253,10 @@ export async function submitGenerationOnce(
       product,
       person,
       tryOnOptionsSchema.parse(job.options),
-      { requestId: job.id },
+      {
+        requestId: job.id,
+        ...(job.provider === "huggingface" ? { garmentCategory: await garmentCategory(job) } : {}),
+      },
     );
   } catch (error) {
     if (error instanceof ProviderError && error.ambiguous) {

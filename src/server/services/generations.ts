@@ -7,6 +7,7 @@ import {
   imageOptionsSchema,
   videoOptionsSchema,
   tryOnOptionsSchema,
+  unsupportedOptionMessage,
 } from "@/server/ai/contracts";
 import { getProviderCapabilities } from "@/server/ai/registry";
 import { quoteGeneration, reserveGeneration } from "@/server/billing/service";
@@ -59,6 +60,8 @@ export async function submitDesignerGeneration(raw: unknown, quoteOnly = false) 
   const tenant = await requireTenant(input.organizationId, "create");
   const capability = requireCapability(input.operation);
   const options = parseGenerationOptions(input.operation, input.options);
+  const unsupported = unsupportedOptionMessage(capability, options);
+  if (unsupported) throw new ApiError(422, unsupported, "OPTION_UNSUPPORTED");
   await consumeRateLimit(`generation:${tenant.organizationId}`, quoteOnly ? 60 : 15, 60);
   if (!input.garmentId && input.operation !== "video")
     throw new ApiError(422, "Select a garment first.", "GARMENT_REQUIRED");

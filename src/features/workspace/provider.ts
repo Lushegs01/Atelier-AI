@@ -1,4 +1,9 @@
-export type PublicProviderId = "qwen" | "fashn";
+export type PublicProviderId = "qwen" | "fashn" | "huggingface";
+const LABELS: Record<PublicProviderId, string> = {
+  qwen: "Qwen Image Edit",
+  fashn: "FASHN",
+  huggingface: "Hugging Face",
+};
 export interface PublicProvider {
   id: PublicProviderId;
   label: string;
@@ -15,6 +20,12 @@ export interface WorkspaceCapability {
   reason?: string;
   notes?: string;
   supportedViews?: readonly string[];
+  supportedResolutions?: readonly string[];
+  supportedDurations?: readonly number[];
+}
+
+export function providerLabel(id: PublicProviderId) {
+  return LABELS[id] ?? id;
 }
 
 export function operationAvailability(
@@ -41,5 +52,7 @@ export function providerDisclosure(provider?: PublicProvider | null) {
     return "Your photograph is processed by this studio’s operator-hosted Qwen Image Edit service. This experimental image edit is not a validated fitting system and may change garment or body details.";
   if (provider?.id === "fashn")
     return "Your photograph is sent to FASHN for third-party AI fashion visualization. Its processing and retention terms apply. Exact garment preservation and fit are not guaranteed.";
+  if (provider?.id === "huggingface")
+    return "Your photograph is sent to an open AI model hosted on Hugging Face Spaces for an experimental visualization. Hugging Face’s terms apply. Exact garment preservation and fit are not guaranteed.";
   return "The processing provider must be identified before this photograph can be submitted.";
 }

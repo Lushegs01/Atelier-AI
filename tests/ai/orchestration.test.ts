@@ -462,6 +462,46 @@ describe("generation lifecycle integration (database, queue, media and HTTP test
     expect(job().error_code).toBe("submission_ambiguous");
   });
 
+  it("resends an expired free Hugging Face submission instead of holding it for an operator", async () => {
+    Object.assign(job(), {
+      provider: "huggingface",
+      provider_model: "Qwen/Qwen-Image-Edit",
+      status: "submitting",
+      lease_until: new Date(Date.now() - 1_000).toISOString(),
+    });
+    provider.generateFashionImage.mockResolvedValueOnce({ id: "photo-event" });
+    await expect(submitGenerationOnce(jobId, organizationId)).resolves.toEqual({
+      id: "photo-event",
+    });
+    expect(provider.generateFashionImage).toHaveBeenCalledTimes(1);
+    expect(job().error_code).toBeNull();
+    expect(state.finalizations).toBe(0);
+  });
+
+  it("passes the garment category to a Hugging Face try-on submission", async () => {
+    const sessionId = "0d7c7f4e-2f0a-4a4e-9a51-6f3b2f8e1c11";
+    state.tables.try_on_sessions[0].id = sessionId;
+    state.tables.consents[0].try_on_session_id = sessionId;
+    Object.assign(job(), {
+      provider: "huggingface",
+      provider_model: "franciszzj/Leffa",
+      operation: "try_on",
+      source_asset_id: "customer",
+      options: { tryOnSessionId: sessionId },
+    });
+    state.tables.garments = [{ id: "garment", organization_id: organizationId, category: "dress" }];
+    provider.generateVirtualTryOn.mockResolvedValueOnce({ id: "tryon-event" });
+    await expect(submitGenerationOnce(jobId, organizationId)).resolves.toEqual({
+      id: "tryon-event",
+    });
+    expect(provider.generateVirtualTryOn).toHaveBeenCalledWith(
+      "https://storage.example/short-lived-source",
+      "https://storage.example/short-lived-source",
+      expect.objectContaining({ tryOnSessionId: sessionId }),
+      { requestId: jobId, garmentCategory: "dress" },
+    );
+  });
+
   it("retries a definite pre-acceptance rejection and keeps only one reservation", async () => {
     provider.generateFashionImage.mockRejectedValueOnce(
       new ProviderError("rate limit", "provider_http_429", true),
