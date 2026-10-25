@@ -25,4 +25,4 @@ Customers can revoke a try-on link and record a durable deletion request. Cleanu
 
 Account exports and account-deletion requests are recorded in `privacy_requests` for **operator review and fulfillment**; the initial release does not automatically delete Auth accounts, transfer workspace ownership or generate a complete legal data export. Review ownership, third-party rights, outstanding financial obligations, consent and applicable legal retention first. Deliver exports through an authorized short-lived channel. Record fulfillment and residual backup/provider retention. These manual steps are a release staffing requirement.
 
-Never claim every upstream copy has been erased merely because an application object was deleted. Verify FASHN’s current retention/account terms and complete available upstream deletion procedures before making that assertion.
+Never claim every upstream copy has been erased merely because an application object was deleted. Verify the active AI provider’s current retention/account terms and complete available upstream deletion procedures before making that assertion.

@@ -9,6 +9,8 @@ import {
   validateMp4Container,
 } from "@/server/storage/validation";
 
+const fashnHosts = ["cdn.fashn.ai", "media.fashn.ai"];
+
 describe("private image and output validation", () => {
   it("fully decodes, normalizes and strips metadata from a synthetic fixture", async () => {
     const source = await sharp({
@@ -67,17 +69,32 @@ describe("private image and output validation", () => {
     "https://cdn.fashn.ai:8443/a",
     "https://user:password@cdn.fashn.ai/a",
     "file:///etc/passwd",
+    "https://franciszzj-leffa.hf.space/gradio_api/file=/tmp/a.webp",
   ])("blocks untrusted output origin %s", (value) => {
-    expect(() => validateProviderOutputUrl(value)).toThrow();
+    expect(() => validateProviderOutputUrl(value, fashnHosts)).toThrow();
   });
 
   it("accepts both official CDN delivery origins", () => {
-    expect(validateProviderOutputUrl("https://cdn.fashn.ai/id/output.png").hostname).toBe(
-      "cdn.fashn.ai",
-    );
-    expect(validateProviderOutputUrl("https://media.fashn.ai/id/output.mp4").hostname).toBe(
-      "media.fashn.ai",
-    );
+    expect(
+      validateProviderOutputUrl("https://cdn.fashn.ai/id/output.png", fashnHosts).hostname,
+    ).toBe("cdn.fashn.ai");
+    expect(
+      validateProviderOutputUrl("https://media.fashn.ai/id/output.mp4", fashnHosts).hostname,
+    ).toBe("media.fashn.ai");
+  });
+
+  it("accepts only the configured Hugging Face Space origins", () => {
+    const hosts = ["franciszzj-leffa.hf.space"];
+    expect(
+      validateProviderOutputUrl(
+        "https://franciszzj-leffa.hf.space/gradio_api/file=/tmp/gradio/a/image.webp",
+        hosts,
+      ).hostname,
+    ).toBe("franciszzj-leffa.hf.space");
+    expect(() =>
+      validateProviderOutputUrl("https://attacker-space.hf.space/gradio_api/file=/x", hosts),
+    ).toThrow();
+    expect(() => validateProviderOutputUrl("https://cdn.fashn.ai/id/output.png", hosts)).toThrow();
   });
 
   it("bounds streaming media even without a content-length header", async () => {

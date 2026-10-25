@@ -67,9 +67,10 @@ export default async function PublicPage({ params }: { params: Promise<{ page: s
             <Pricing />
             <div className="mt-8">
               <Notice>
-                Photo and try-on use FASHN Preview capabilities; fashion video is Experimental.
-                Availability and prices must be enabled by the operator after staging verification.
-                A virtual try-on is an AI visualization, not a guarantee of fit.
+                Photo, try-on and video use the operator’s AI provider: open models on free Hugging
+                Face Spaces (Experimental) or FASHN (Preview; video Experimental). Availability and
+                prices must be enabled by the operator after staging verification. A virtual try-on
+                is an AI visualization, not a guarantee of fit.
               </Notice>
             </div>
           </>
@@ -190,13 +191,19 @@ export default async function PublicPage({ params }: { params: Promise<{ page: s
             </p>
             <h2>Third-party processing</h2>
             <p>
-              Supabase handles authentication, database and private storage. FASHN processes images
-              for enabled AI capabilities. Inngest orchestrates background jobs. Paystack processes
-              payments; Atelier AI does not store card numbers. Hosting and optional Sentry
-              monitoring are configured by the operator.
+              Supabase handles authentication, database and private storage. The AI provider the
+              operator configures processes images for enabled AI capabilities: either open models
+              hosted on Hugging Face Spaces or FASHN. The customer consent screen names the active
+              provider. Inngest orchestrates background jobs. Paystack processes payments; Atelier
+              AI does not store card numbers. Hosting and optional Sentry monitoring are configured
+              by the operator.
             </p>
             <p>
-              FASHN describes transient processing and hosted-output retention in its{" "}
+              Hugging Face Spaces run code published by each Space’s owner under the{" "}
+              <a href="https://huggingface.co/privacy" target="_blank" rel="noreferrer">
+                Hugging Face privacy policy
+              </a>
+              . FASHN describes transient processing and hosted-output retention in its{" "}
               <a
                 href="https://docs.fashn.ai/api-overview/data-retention-privacy"
                 target="_blank"

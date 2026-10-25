@@ -29,16 +29,16 @@ The Inngest SDK originally brought a Zod version affected by the current audit a
 
 ## External verification status
 
-| Area                    | Implemented                            | Local evidence                              | Real/staging/production                                         |
-| ----------------------- | -------------------------------------- | ------------------------------------------- | --------------------------------------------------------------- |
-| Auth, tenants and roles | Yes                                    | Policy/service tests, SQL and denial smoke  | Hosted Auth/RLS not exercised                                   |
-| Private uploads/media   | Yes                                    | Actual Sharp decoding + authorization tests | Supabase Storage API not exercised                              |
-| Photo/video/try-on      | FASHN adapter and UI                   | Contract, failure and orchestration doubles | No real predictions; flags remain off                           |
-| Durable jobs/outbox     | Inngest functions and SQL              | Crash/resume/ambiguity/capacity tests       | Managed scheduler not registered or exercised                   |
-| Credits/payments        | Transactions and Paystack adapter      | Ledger/RLS/idempotency/signature tests      | No actual checkout, webhook delivery or refund                  |
-| PWA                     | Manifest/icons/worker/offline document | Manifest/asset checks, responsive Chromium  | HTTPS installation and Safari/Android device acceptance pending |
-| Account export/deletion | Request/review workflow                | Authorization and durable request paths     | Staffed fulfillment and legal retention decisions required      |
-| Deployment              | CI, Docker and guides                  | Local production build                      | Not deployed; CI workflow has not run on a remote host          |
+| Area                    | Implemented                            | Local evidence                                                            | Real/staging/production                                                                                |
+| ----------------------- | -------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Auth, tenants and roles | Yes                                    | Policy/service tests, SQL and denial smoke                                | Hosted Auth/RLS not exercised                                                                          |
+| Private uploads/media   | Yes                                    | Actual Sharp decoding + authorization tests                               | Supabase Storage API not exercised                                                                     |
+| Photo/video/try-on      | Hugging Face and FASHN adapters and UI | Contract, failure and orchestration doubles; one live Hugging Face try-on | Photo/video payloads validated by the Spaces but not generated; no FASHN predictions; flags remain off |
+| Durable jobs/outbox     | Inngest functions and SQL              | Crash/resume/ambiguity/capacity tests                                     | Managed scheduler not registered or exercised                                                          |
+| Credits/payments        | Transactions and Paystack adapter      | Ledger/RLS/idempotency/signature tests                                    | No actual checkout, webhook delivery or refund                                                         |
+| PWA                     | Manifest/icons/worker/offline document | Manifest/asset checks, responsive Chromium                                | HTTPS installation and Safari/Android device acceptance pending                                        |
+| Account export/deletion | Request/review workflow                | Authorization and durable request paths                                   | Staffed fulfillment and legal retention decisions required                                             |
+| Deployment              | CI, Docker and guides                  | Local production build                                                    | Not deployed; CI workflow has not run on a remote host                                                 |
 
 No Docker runtime was available, so `supabase start`, a full local Supabase stack, the container build and managed migration application were not run. No independent-connection PostgreSQL race test, production load test, device installability audit or formal accessibility certification was performed.
 
@@ -47,7 +47,7 @@ The final production server was started locally on port 3002: `/` and `/api/heal
 ## Exact next actions
 
 1. Create an isolated Supabase staging project, apply the reviewed migration and configure email confirmation, SMTP, redirect origins and private storage.
-2. Supply server secrets and the exact application origin from `.env.example`. Configure FASHN, Inngest and Paystack test accounts.
+2. Supply server secrets and the exact application origin from `.env.example`. Configure the AI provider (`HF_TOKEN`, or FASHN), Inngest and Paystack test accounts.
 3. Deploy an explicitly authorized staging revision, register Inngest functions and the Paystack webhook, then run every acceptance item in RELEASE-CHECKLIST.md using two organizations and synthetic images.
 4. Review model lifecycle, retail catalog/provider costs, privacy terms, support identity, backup restore and operational responsibilities. Enable only accepted capabilities and reviewed prices.
 5. Obtain production-release authorization, configure separate production credentials, deploy the reviewed revision, and record real production smoke evidence.

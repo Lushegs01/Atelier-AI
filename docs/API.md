@@ -75,4 +75,4 @@ See source route schemas for exact administrative action fields. Full refunds re
 
 ## Verification boundary
 
-API unit tests use clearly identified synthetic users, mocked transport and test doubles. Database tests execute actual PostgreSQL policies/functions in PGlite with auth/storage harness schemas. Neither is evidence of Supabase Auth emails, live PostgREST, hosted storage signing, Inngest delivery or Paystack/FASHN acceptance. The staged browser workflows require configured test accounts and must pass before release.
+API unit tests use clearly identified synthetic users, mocked transport and test doubles. Database tests execute actual PostgreSQL policies/functions in PGlite with auth/storage harness schemas. Neither is evidence of Supabase Auth emails, live PostgREST, hosted storage signing, Inngest delivery or Paystack/AI provider acceptance. The staged browser workflows require configured test accounts and must pass before release.

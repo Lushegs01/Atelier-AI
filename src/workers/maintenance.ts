@@ -51,7 +51,7 @@ export const recoverStuckGenerations = inngest.createFunction(
   async ({ step, logger }) => {
     const stuck = await step.run("inspect-jobs", async () => {
       const admin = getAdminClient();
-      // A worker may have crashed after FASHN accepted a POST but before it persisted the id.
+      // A worker may have crashed after the provider accepted a POST but before it persisted the id.
       // Preserve the reservation and prevent another POST; an operator reviews provider history.
       const { data, error } = await admin
         .from("generation_jobs")

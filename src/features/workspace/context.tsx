@@ -114,6 +114,16 @@ export interface WorkspaceData {
   tryOnSessions: TryOnSession[];
   packages: Package[];
   pagination?: { page: number; pageSize: number; hasMore: boolean };
+  ai?: {
+    provider: string;
+    capabilities: {
+      operation: string;
+      enabled: boolean;
+      lifecycle: string;
+      supportedResolutions?: string[];
+      supportedDurations?: number[];
+    }[];
+  };
 }
 const initial: WorkspaceData = {
   configured: false,

@@ -1,6 +1,6 @@
 # Atelier AI
 
-A modular Next.js fashion-content application with Supabase authentication, PostgreSQL tenant isolation, private media, FASHN adapters, durable Inngest jobs and Paystack prepaid credits.
+A modular Next.js fashion-content application with Supabase authentication, PostgreSQL tenant isolation, private media, free Hugging Face Spaces (default) and paid FASHN AI adapters, durable Inngest jobs and Paystack prepaid credits.
 
 **Status:** implemented for local verification and controlled staging setup. No external credentials were supplied. No live payment, AI generation or deployment has been verified. All model capabilities and draft price rules are disabled by default. Do not launch until the [release checklist](docs/RELEASE-CHECKLIST.md) passes.
 
@@ -34,7 +34,7 @@ npm run db:migrate
 
 Never point a reset command at production. The remote migration creates tables and catalog rows; local `seed.sql` is for CLI resets. Configure Supabase email verification, SMTP, redirect allowlists and abuse controls. Add the Supabase URL, public key and server-only service credential to `.env.local` using `.env.example`. See [database setup](docs/DATABASE.md).
 
-Configure FASHN and Inngest credentials, then run the official Inngest dev server:
+Create a free Hugging Face **read** token at <https://huggingface.co/settings/tokens> and set it as `HF_TOKEN` (`AI_PROVIDER=huggingface` is the default; set `AI_PROVIDER=fashn` with `FASHN_API_KEY` to use the paid FASHN API instead). Configure Inngest credentials, then run the official Inngest dev server:
 
 ```powershell
 npx inngest-cli@latest dev -u http://localhost:3000/api/inngest
@@ -69,7 +69,7 @@ src/features/            authentication, studio, library, billing and guest UI
 src/lib/                 environment, SSR clients, utility and monitoring configuration
 src/server/auth/         verified identities, roles, origin checks and CSP
 src/server/billing/      pricing, ledger services, Paystack and margin calculations
-src/server/ai/           provider contracts and FASHN adapter
+src/server/ai/           provider contracts, selector, Hugging Face and FASHN adapters
 src/server/storage/      bounded decoding, private media and signed authorization
 src/server/services/     tenant-scoped application services
 src/workers/             durable generation, outbox, recovery and privacy cleanup

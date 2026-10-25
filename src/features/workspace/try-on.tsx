@@ -137,8 +137,8 @@ export default function TryOnPage() {
       <div className="mt-6">
         <Notice>
           Virtual try-on is an AI visualization, not a guarantee of accurate fit, body measurements
-          or real-world appearance. Customers’ photographs are processed by FASHN only after
-          explicit consent.
+          or real-world appearance. Customers’ photographs are sent to the configured AI provider
+          only after explicit consent.
         </Notice>
       </div>
       <Dialog

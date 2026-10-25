@@ -4,12 +4,21 @@ const flag = z
   .enum(["true", "false"])
   .default("false")
   .transform((v) => v === "true");
+const space = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,95}\/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/)
+  .optional();
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   NEXT_PUBLIC_APP_URL: z.url().default("http://localhost:3000"),
   NEXT_PUBLIC_SUPABASE_URL: z.url().optional(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(20).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
+  AI_PROVIDER: z.enum(["huggingface", "fashn"]).default("huggingface"),
+  HF_TOKEN: z.string().min(8).optional(),
+  HF_PHOTO_SPACE: space,
+  HF_TRY_ON_SPACE: space,
+  HF_VIDEO_SPACE: space,
   FASHN_API_KEY: z.string().min(8).optional(),
   PAYSTACK_SECRET_KEY: z.string().min(8).optional(),
   NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: z.string().optional(),
@@ -36,6 +45,11 @@ const schema = z.object({
   SUPPORT_EMAIL: z.email().optional(),
 });
 
+/** The credential the selected AI provider needs before any generation flag can take effect. */
+export function aiProviderCredential(provider: "huggingface" | "fashn") {
+  return provider === "fashn" ? ("FASHN_API_KEY" as const) : ("HF_TOKEN" as const);
+}
+
 export function parseEnvironment(input: Record<string, string | undefined>) {
   return schema.parse(Object.fromEntries(Object.entries(input).filter(([, v]) => v !== "")));
 }
@@ -60,11 +74,12 @@ export function environmentReadiness(input: Record<string, string | undefined> =
     ] as const
   ).filter((key) => !env[key]);
   const extra: string[] = [];
+  const credential = aiProviderCredential(env.AI_PROVIDER);
   if (
     (env.ENABLE_PHOTO_GENERATION || env.ENABLE_TRY_ON || env.ENABLE_VIDEO_GENERATION) &&
-    !env.FASHN_API_KEY
+    !env[credential]
   )
-    extra.push("FASHN_API_KEY");
+    extra.push(credential);
   if (env.NODE_ENV === "production" && env.NEXT_PUBLIC_DEMO_MODE)
     extra.push("DEMO_MODE_MUST_BE_DISABLED");
   if (env.NODE_ENV === "production" && !env.NEXT_PUBLIC_APP_URL.startsWith("https://"))

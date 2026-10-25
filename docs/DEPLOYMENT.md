@@ -4,7 +4,7 @@ No deployment has been performed. Use a separate staging Supabase project, Payst
 
 ## Recommended runtime
 
-Use a Node.js 24 compatible Next.js host (Vercel or the supplied Dockerfile), Supabase PostgreSQL/Auth/private Storage, managed Inngest, FASHN and Paystack. Native Sharp processing and server-only SDKs require the Node runtime. AI work is split into durable steps, not held inside a customer HTTP request.
+Use a Node.js 24 compatible Next.js host (Vercel or the supplied Dockerfile), Supabase PostgreSQL/Auth/private Storage, managed Inngest, an AI provider (free Hugging Face Spaces by default, or FASHN) and Paystack. Native Sharp processing and server-only SDKs require the Node runtime. AI work is split into durable steps, not held inside a customer HTTP request.
 
 For Vercel, connect a reviewed Git repository, use build command `npm run build`, and configure environment variables from `.env.example` in the hosting dashboard. This repository has not been pushed to a remote. The operator must authorize and perform the initial staging deployment after setup.
 
@@ -26,7 +26,7 @@ Keep `.env.staging` outside Git. Supabase public values must also be supplied to
 3. Add a verified operator account to `platform_admins` through a trusted database administration session. Never expose this operation through the app.
 4. Configure Inngest event and signing keys. Register the deployed `/api/inngest` endpoint. Verify the generation, recovery, outbox, maintenance and retention functions are active. Set `INNGEST_DEV=0` in staging/production.
 5. Configure Paystack **test** credentials and `/api/payments/webhook`. Verify a test checkout, server verification, webhook replay, amount mismatch and exactly-once credits.
-6. Configure a FASHN account, review terms/retention and fund a small test budget. Photo and try-on are Preview, video Experimental. Enable one flag at a time after real capability acceptance. Verify input URLs, output allowlist, copying, video playback and failures.
+6. Configure the AI provider. For the free default, set `HF_TOKEN` and preferably point `HF_*_SPACE` at private duplicates of the default Spaces. For FASHN, set `AI_PROVIDER=fashn` and `FASHN_API_KEY` and fund a small test budget. Review terms and retention either way. FASHN photo and try-on are Preview and video Experimental; every Hugging Face capability is Experimental. Enable one flag at a time after real capability acceptance. Verify input URLs, output allowlist, copying, video playback and failures.
 7. Review the draft retail catalog, current provider credit costs, account discount, FX, fees and margin. Add reviewed provider cost estimates and enable reviewed rules/packages only after acceptance. No seeded rate is a launch price.
 8. Configure monitoring, alert routing, retention and recovery ownership. Supply legal identity, support email, required privacy disclosures and final terms after qualified review.
 9. Require `/api/ready` to return 200, complete the release checklist and record signed-off staging evidence. Readiness checks configuration, schema reachability and bucket privacy; it is not a successful provider/payment smoke test.

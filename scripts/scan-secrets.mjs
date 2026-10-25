@@ -37,9 +37,10 @@ const rules = [
   ["API secret", /\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{24,}\b/g],
   ["GitHub token", /\b(?:ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\b/g],
   ["AWS access key", /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g],
+  ["Hugging Face token", /\bhf_[A-Za-z0-9]{30,}\b/g],
   [
     "literal server credential",
-    /\b(?:FASHN_API_KEY|PAYSTACK_SECRET_KEY|SUPABASE_SERVICE_ROLE_KEY|INNGEST_SIGNING_KEY|CRON_SECRET)\s*[:=]\s*["']([^"'\r\n]{16,})["']/g,
+    /\b(?:HF_TOKEN|FASHN_API_KEY|PAYSTACK_SECRET_KEY|SUPABASE_SERVICE_ROLE_KEY|INNGEST_SIGNING_KEY|CRON_SECRET)\s*[:=]\s*["']([^"'\r\n]{16,})["']/g,
   ],
 ];
 for (const path of paths) {

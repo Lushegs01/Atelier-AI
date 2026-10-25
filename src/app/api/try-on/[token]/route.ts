@@ -4,6 +4,7 @@ import { consumeRateLimit } from "@/server/auth/context";
 import { ApiError, hashToken } from "@/server/auth/security";
 import { assertDatabaseResult, readImageForm, readJson, route } from "@/server/services/http";
 import { CONSENT_VERSION, getGuestSession } from "@/server/services/try-on";
+import { activeProviderLabel, getProviderCapabilities } from "@/server/ai/provider";
 import { requireCapability } from "@/server/services/generations";
 import { reserveGeneration } from "@/server/billing/service";
 import { getAssetSignedUrl, uploadPrivateImage, deletePrivateAsset } from "@/server/storage/media";
@@ -99,7 +100,10 @@ export async function GET(request: Request, context: Context) {
       job,
       outputs,
       consentVersion: CONSENT_VERSION,
-      available: Boolean(process.env.FASHN_API_KEY && process.env.ENABLE_TRY_ON === "true"),
+      processor: activeProviderLabel(),
+      available: Boolean(
+        getProviderCapabilities().find((capability) => capability.operation === "try_on")?.enabled,
+      ),
     };
   });
 }
