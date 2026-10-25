@@ -38,7 +38,7 @@ The default `AI_PROVIDER=qwen` uses `Qwen/Qwen-Image-Edit-2511` through a separa
 
 Provision the service using [the inference guide](inference/qwen/README.md), protect it with a random shared token, and set `QWEN_API_URL` plus `QWEN_API_KEY` in the web app. The same token must be injected into the GPU service. `QWEN_API_KEY` is your own service credential, not a purchased vendor API key. Use HTTPS; the explicit insecure-local exception is development-only. Enable photographs only after an authorized real-output acceptance test. Customer visualization has a separate experimental flag and is not a validated fitting model. **Qwen cannot generate video.**
 
-Hugging Face Spaces adapter source and tests are retained from upstream commit `f9a213c`, but are unregistered in the active Qwen/FASHN provider registry. They are not an enabled runtime option or evidence of successful Qwen inference. The [imported branch report](docs/HUGGINGFACE-VERIFICATION.md) is retained separately from the original and Qwen verification reports.
+**Free option without a GPU:** set `AI_PROVIDER=huggingface` and a free Hugging Face read token as `HF_TOKEN`. Jobs then run on public ZeroGPU Spaces within that account's daily GPU quota: photos, customer try-on and 5-second 480p video. Run `npm run db:migrate` so the database accepts the provider, then enable its reviewed prices. See [AI providers](docs/AI-PROVIDERS.md#free-hugging-face-spaces). The [imported branch report](docs/HUGGINGFACE-VERIFICATION.md) records the original live check.
 
 Configure Inngest credentials, then run the official Inngest dev server:
 

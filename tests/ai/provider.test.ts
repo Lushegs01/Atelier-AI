@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FashnProvider, getFashnCapabilities } from "@/server/ai/fashn";
 import { QwenProvider } from "@/server/ai/qwen";
+import { HuggingFaceProvider } from "@/server/ai/huggingface";
 import {
   activeProviderName,
   activeProviderLabel,
@@ -41,8 +42,24 @@ describe("provider factory compatibility", () => {
     expect(providerOutputHosts()).toEqual(["cdn.fashn.ai", "media.fashn.ai"]);
   });
 
-  it("rejects an unsupported configured provider without selecting Hugging Face", () => {
+  it("selects free Hugging Face Spaces only when explicitly configured", () => {
     vi.stubEnv("AI_PROVIDER", "huggingface");
+    expect(activeProviderName()).toBe("huggingface");
+    expect(activeProviderLabel()).toBe("Hugging Face");
+    expect(createFashionProvider()).toBeInstanceOf(HuggingFaceProvider);
+    expect(createFashionProvider("video")).toBeInstanceOf(HuggingFaceProvider);
+    expect(
+      getProviderCapabilities().every((capability) => capability.provider === "huggingface"),
+    ).toBe(true);
+    expect(providerOutputHosts()).toEqual([
+      "multimodalart-qwen-image-edit-fast.hf.space",
+      "franciszzj-leffa.hf.space",
+      "zerogpu-aoti-wan2-2-fp8da-aoti-faster.hf.space",
+    ]);
+  });
+
+  it("rejects an unsupported configured provider", () => {
+    vi.stubEnv("AI_PROVIDER", "replicate");
     expect(() => activeProviderName()).toThrow("unsupported");
     expect(() => createFashionProvider()).toThrow("unsupported");
   });

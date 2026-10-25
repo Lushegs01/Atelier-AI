@@ -49,6 +49,42 @@ describe("provider selection and pinning", () => {
     });
     expect(provider.constructor.name).toBe("FashnProvider");
   });
+  it("enables free Hugging Face photos, try-on and video only with a token and flags", () => {
+    vi.stubEnv("AI_PROVIDER", "huggingface");
+    vi.stubEnv("ENABLE_PHOTO_GENERATION", "true");
+    vi.stubEnv("ENABLE_TRY_ON", "true");
+    vi.stubEnv("ENABLE_VIDEO_GENERATION", "true");
+    vi.stubEnv("HF_TOKEN", "");
+    expect(getProviderCapabilities().every((capability) => !capability.enabled)).toBe(true);
+    vi.stubEnv("HF_TOKEN", "hf_synthetic-test-token");
+    expect(getActiveProviderId()).toBe("huggingface");
+    expect(getProviderCapabilities().map(({ operation, enabled }) => [operation, enabled])).toEqual(
+      [
+        ["photo", true],
+        ["try_on", true],
+        ["video", true],
+      ],
+    );
+  });
+  it("resumes pinned Hugging Face jobs after another provider is selected", () => {
+    vi.stubEnv("AI_PROVIDER", "qwen");
+    for (const [operation, model] of [
+      ["photo", "Qwen/Qwen-Image-Edit"],
+      ["try_on", "franciszzj/Leffa"],
+      ["video", "Wan-AI/Wan2.2-I2V-A14B"],
+    ] as const)
+      expect(
+        createProviderForJob({ provider: "huggingface", provider_model: model, operation })
+          .constructor.name,
+      ).toBe("HuggingFaceProvider");
+    expect(() =>
+      createProviderForJob({
+        provider: "huggingface",
+        provider_model: "tryon-max",
+        operation: "try_on",
+      }),
+    ).toThrow("pinned provider model");
+  });
   it("rejects unknown or mismatched pinned models rather than rerouting", () => {
     expect(() =>
       createProviderForJob({ provider: "fashn", provider_model: QWEN_MODEL, operation: "photo" }),

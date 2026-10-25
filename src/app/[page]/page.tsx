@@ -215,6 +215,11 @@ export default async function PublicPage({ params }: { params: Promise<{ page: s
               >
                 data retention documentation
               </a>
+              . A studio may instead select free open models hosted on Hugging Face Spaces. Only
+              those jobs send photographs to Hugging Face and the operator of each Space, under the{" "}
+              <a href="https://huggingface.co/privacy" target="_blank" rel="noreferrer">
+                Hugging Face privacy policy
+              </a>
               . Provider and GPU-host retention and account-specific terms must be checked before
               launch. Deletion from Atelier AI does not by itself confirm removal of every upstream
               or backup copy.

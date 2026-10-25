@@ -47,7 +47,7 @@ export interface Prediction {
 }
 
 export interface ProviderCapability {
-  provider?: "fashn" | "qwen";
+  provider?: "fashn" | "qwen" | "huggingface";
   operation: GenerationOperation;
   model: string;
   lifecycle: "Preview" | "Experimental";
@@ -61,14 +61,11 @@ export interface ProviderCapability {
   notes?: string;
 }
 
-/** Additional garment information used only by standalone adapters that need category weights. */
-export interface GarmentContext {
-  category?: string;
-}
-
 export interface GenerationContext {
   /** Stable application job UUID; self-hosted services use this to deduplicate submissions. */
   requestId: string;
+  /** Garment category, for adapters whose try-on weights differ by garment type. */
+  garmentCategory?: string;
 }
 
 export interface FashionProvider {

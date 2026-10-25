@@ -15,6 +15,17 @@ describe("release configuration", () => {
     expect(env.ENABLE_TRY_ON).toBe(false);
     expect(env.AI_PROVIDER).toBe("qwen");
   });
+  it("requires a Hugging Face token only when that provider is selected", () => {
+    const base = { NODE_ENV: "test", ENABLE_TRY_ON: "true", AI_PROVIDER: "huggingface" };
+    const state = environmentReadiness(base);
+    expect(state.missing).toContain("HF_TOKEN");
+    expect(state.missing).not.toContain("QWEN_API_URL");
+    expect(state.missing).not.toContain("FASHN_API_KEY");
+    expect(environmentReadiness({ ...base, HF_TOKEN: "hf_synthetic" }).missing).not.toContain(
+      "HF_TOKEN",
+    );
+    expect(() => parseEnvironment({ HF_TRY_ON_SPACE: "https://evil.test/space" })).toThrow();
+  });
   it("does not require FASHN credentials when Qwen is selected", () => {
     const state = environmentReadiness({
       NODE_ENV: "test",

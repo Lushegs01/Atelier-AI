@@ -118,7 +118,7 @@ export function normalizeGenerationOptions(operation: Operation, input: unknown 
   return operation === "video" ? videoOptionsSchema.parse(input) : imageOptionsSchema.parse(input);
 }
 export function normalizeProviderGenerationOptions(
-  provider: "qwen" | "fashn",
+  provider: "qwen" | "fashn" | "huggingface",
   operation: Operation,
   input: unknown = {},
 ) {
@@ -133,6 +133,16 @@ export function normalizeProviderGenerationOptions(
     throw new BillingError(
       422,
       "Qwen currently supports one balanced 1K PNG per request.",
+      "PROVIDER_OPTIONS_UNSUPPORTED",
+    );
+  if (
+    provider === "huggingface" &&
+    "duration" in options &&
+    (options.duration !== 5 || options.resolution !== "480p")
+  )
+    throw new BillingError(
+      422,
+      "The free Hugging Face video model supports 5-second 480p clips only.",
       "PROVIDER_OPTIONS_UNSUPPORTED",
     );
   return options;

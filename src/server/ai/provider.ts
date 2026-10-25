@@ -1,6 +1,7 @@
 import "server-only";
 import type { FashionProvider, GenerationOperation, ProviderCapability } from "./contracts";
 import { FASHN_OUTPUT_HOSTS } from "./fashn";
+import { huggingFaceOutputHosts } from "./huggingface";
 import {
   assertCapabilityEnabled as assertRegistryCapabilityEnabled,
   createProviderForJob,
@@ -11,7 +12,11 @@ import {
 
 export type ProviderName = ProviderId;
 
-const LABELS: Record<ProviderName, string> = { qwen: "Qwen Image Edit", fashn: "FASHN" };
+const LABELS: Record<ProviderName, string> = {
+  qwen: "Qwen Image Edit",
+  fashn: "FASHN",
+  huggingface: "Hugging Face",
+};
 
 /** Compatibility facade: provider selection remains centralized in the pinned-job registry. */
 export function activeProviderName(): ProviderName {
@@ -36,6 +41,7 @@ export function createFashionProvider(operation: GenerationOperation = "photo"):
 }
 
 /** Qwen output authorization requires getQwenOutputRequest's exact job URL check. */
-export function providerOutputHosts(): string[] {
-  return activeProviderName() === "fashn" ? [...FASHN_OUTPUT_HOSTS] : [];
+export function providerOutputHosts(provider: ProviderName = activeProviderName()): string[] {
+  if (provider === "fashn") return [...FASHN_OUTPUT_HOSTS];
+  return provider === "huggingface" ? huggingFaceOutputHosts() : [];
 }

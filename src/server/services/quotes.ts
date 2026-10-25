@@ -8,7 +8,7 @@ const schema = z
     organizationId: z.string().uuid(),
     actorId: z.string().uuid(),
     operation: z.enum(["photo", "video", "try_on"]),
-    provider: z.enum(["qwen", "fashn"]),
+    provider: z.enum(["qwen", "fashn", "huggingface"]),
     providerModel: z.string().min(1).max(160),
     garmentId: z.string().uuid().nullable(),
     sourceAssetId: z.string().uuid().nullable(),

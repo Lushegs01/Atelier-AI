@@ -1,6 +1,7 @@
 import "server-only";
 import { FashnProvider, getProviderCapabilities as fashnCapabilities } from "./fashn";
 import { QwenProvider, getQwenCapabilities, QWEN_MODEL } from "./qwen";
+import { HF_MODELS, HuggingFaceProvider, getHuggingFaceCapabilities } from "./huggingface";
 import {
   ProviderError,
   type FashionProvider,
@@ -8,14 +9,15 @@ import {
   type ProviderCapability,
 } from "./contracts";
 
-export type ProviderId = "fashn" | "qwen";
+export type ProviderId = "fashn" | "qwen" | "huggingface";
+const PROVIDERS: readonly string[] = ["qwen", "fashn", "huggingface"];
 export { QWEN_MODEL };
 
 export function getActiveProviderId(): ProviderId {
   const provider = process.env.AI_PROVIDER || "qwen";
-  if (provider !== "qwen" && provider !== "fashn")
+  if (!PROVIDERS.includes(provider))
     throw new ProviderError("The configured AI provider is unsupported.", "provider_invalid");
-  return provider;
+  return provider as ProviderId;
 }
 
 export function getProviderCapabilities(
@@ -23,6 +25,7 @@ export function getProviderCapabilities(
 ): ProviderCapability[] {
   if (provider === "fashn")
     return fashnCapabilities().map((capability) => ({ ...capability, provider }));
+  if (provider === "huggingface") return getHuggingFaceCapabilities();
   return getQwenCapabilities();
 }
 
@@ -47,7 +50,7 @@ export function createProviderForJob(job: {
   operation: GenerationOperation;
 }): FashionProvider {
   const inferred = job.provider || (job.provider_model === QWEN_MODEL ? "qwen" : "fashn");
-  if (inferred !== "qwen" && inferred !== "fashn")
+  if (!PROVIDERS.includes(inferred))
     throw new ProviderError(
       "This job uses an unknown provider. Operator reconciliation is required.",
       "provider_invalid",
@@ -55,9 +58,11 @@ export function createProviderForJob(job: {
   const expected =
     inferred === "qwen"
       ? QWEN_MODEL
-      : ({ photo: "product-to-model", video: "image-to-video", try_on: "tryon-max" } as const)[
-          job.operation
-        ];
+      : inferred === "huggingface"
+        ? HF_MODELS[job.operation]
+        : ({ photo: "product-to-model", video: "image-to-video", try_on: "tryon-max" } as const)[
+            job.operation
+          ];
   if (job.provider_model && job.provider_model !== expected)
     throw new ProviderError(
       "This job's pinned provider model is not supported. It has not been rerouted.",
@@ -68,5 +73,6 @@ export function createProviderForJob(job: {
       throw new ProviderError("Qwen-Image-Edit does not support video.", "operation_unsupported");
     return new QwenProvider();
   }
+  if (inferred === "huggingface") return new HuggingFaceProvider();
   return new FashnProvider();
 }

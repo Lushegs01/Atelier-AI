@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   HuggingFaceProvider,
   getHuggingFaceCapabilities,
+  huggingFaceOutputRequest,
   huggingFaceSpaceHost,
 } from "@/server/ai/huggingface";
 import { imageOptionsSchema, tryOnOptionsSchema, videoOptionsSchema } from "@/server/ai/contracts";
@@ -46,7 +47,7 @@ describe("Hugging Face Spaces adapter (HTTP test doubles; no live AI calls)", ()
       "https://storage.example/garment",
       "https://storage.example/person",
       tryOnOptionsSchema.parse({}),
-      { category: "dress" },
+      { requestId: "job-1", garmentCategory: "dress" },
     );
     expect(result).toEqual({ id: `tryon-${event}` });
     const { url, init, data } = submitted(request);
@@ -72,7 +73,7 @@ describe("Hugging Face Spaces adapter (HTTP test doubles; no live AI calls)", ()
       "garment",
       "person",
       tryOnOptionsSchema.parse({ quality: "quality" }),
-      { category },
+      { requestId: "job-1", garmentCategory: category },
     );
     const { data } = submitted(request);
     expect(data[3]).toBe(50);
@@ -256,11 +257,36 @@ describe("Hugging Face Spaces adapter (HTTP test doubles; no live AI calls)", ()
 
   it("disables every capability without a token and limits video to 5-second 480p", () => {
     expect(getHuggingFaceCapabilities().every((capability) => capability.enabled)).toBe(true);
+    expect(getHuggingFaceCapabilities().map(({ provider, model }) => [provider, model])).toEqual([
+      ["huggingface", "Qwen/Qwen-Image-Edit"],
+      ["huggingface", "franciszzj/Leffa"],
+      ["huggingface", "Wan-AI/Wan2.2-I2V-A14B"],
+    ]);
     expect(
       getHuggingFaceCapabilities().find((capability) => capability.operation === "video"),
     ).toMatchObject({ supportedResolutions: ["480p"], supportedDurations: [5] });
     vi.stubEnv("HF_TOKEN", "");
     expect(getHuggingFaceCapabilities().some((capability) => capability.enabled)).toBe(false);
+  });
+
+  it("keeps the pinned model when a duplicate Space is configured", () => {
+    vi.stubEnv("HF_TRY_ON_SPACE", "studio-owner/Leffa");
+    expect(
+      getHuggingFaceCapabilities().find((capability) => capability.operation === "try_on"),
+    ).toMatchObject({ model: "franciszzj/Leffa" });
+  });
+
+  it("accepts output only from configured Spaces and sends the token for private copies", () => {
+    vi.stubEnv("HF_TRY_ON_SPACE", "studio-owner/Leffa");
+    const transfer = huggingFaceOutputRequest(
+      "https://studio-owner-leffa.hf.space/gradio_api/file=/tmp/gradio/a/image.webp",
+    );
+    expect(transfer.url.hostname).toBe("studio-owner-leffa.hf.space");
+    expect(transfer.headers).toEqual({ Authorization: "Bearer hf_synthetic-test-token" });
+    expect(() =>
+      huggingFaceOutputRequest("https://franciszzj-leffa.hf.space/gradio_api/file=/tmp/x.webp"),
+    ).toThrow();
+    expect(() => huggingFaceOutputRequest("https://cdn.fashn.ai/output.png")).toThrow();
   });
 
   it("derives valid Space hosts for standalone adapter configuration", () => {

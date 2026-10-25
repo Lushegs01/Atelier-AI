@@ -6,7 +6,7 @@ Supabase Auth is verified with `getUser()` rather than trusting browser metadata
 
 ## Generation
 
-`AI_PROVIDER=qwen` selects the default operator-hosted `Qwen/Qwen-Image-Edit-2511` service. An explicit `fashn` selection retains the optional original adapter. Jobs and customer invitations pin their provider/model; changing configuration never reroutes existing customer work. Qwen produces experimental still-image edits and separately enabled customer visualization. It has no video operation. The GPU service is a separate runtime from the Next.js web host.
+`AI_PROVIDER=qwen` selects the default operator-hosted `Qwen/Qwen-Image-Edit-2511` service. An explicit `fashn` selection retains the optional original adapter, and `huggingface` runs free public ZeroGPU Spaces with a Hugging Face token. Jobs and customer invitations pin their provider/model; changing configuration never reroutes existing customer work. Qwen produces experimental still-image edits and separately enabled customer visualization. It has no video operation. The GPU service is a separate runtime from the Next.js web host.
 
 ```mermaid
 flowchart LR
