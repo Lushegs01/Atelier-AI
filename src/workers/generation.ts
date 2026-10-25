@@ -2,7 +2,7 @@ import "server-only";
 import { captureMessage } from "@sentry/nextjs";
 import { NonRetriableError, RetryAfterError } from "inngest";
 import { getAdminClient } from "@/lib/supabase/admin";
-import { FashnProvider, assertCapabilityEnabled } from "@/server/ai/fashn";
+import { assertCapabilityEnabled, createFashionProvider } from "@/server/ai/provider";
 import {
   GenerationOperation,
   ProviderError,
@@ -115,6 +115,16 @@ async function resolveGarmentSource(job: Job): Promise<string> {
   return downloadAssetForProvider({ organizationId: job.organization_id, assetId: asset.id });
 }
 
+async function garmentCategory(job: Job): Promise<string | undefined> {
+  const { data } = await getAdminClient()
+    .from("garments")
+    .select("category")
+    .eq("organization_id", job.organization_id)
+    .eq("id", job.garment_id)
+    .maybeSingle();
+  return typeof data?.category === "string" ? data.category : undefined;
+}
+
 export async function submitGenerationOnce(
   jobId: string,
   organizationId: string,
@@ -152,7 +162,7 @@ export async function submitGenerationOnce(
   if (claimError) throw new Error("The generation could not be claimed.");
   if (!claimed || !Array.isArray(claimed) || !claimed.length) return { id: null, waiting: true };
   try {
-    const provider = new FashnProvider();
+    const provider = createFashionProvider();
     if (job.operation === "photo") {
       const source = await resolveGarmentSource(job);
       return await provider.generateFashionImage(source, imageOptionsSchema.parse(job.options));
@@ -177,6 +187,7 @@ export async function submitGenerationOnce(
       product,
       person,
       tryOnOptionsSchema.parse(job.options),
+      { category: await garmentCategory(job) },
     );
   } catch (error) {
     if (error instanceof ProviderError && error.ambiguous) {
@@ -216,7 +227,7 @@ export async function pollGenerationAndTransfer(
   const job = await loadJob(jobId);
   if (["succeeded", "failed", "cancelled"].includes(job.status)) return { state: job.status };
   await checkTryOnConsent(job);
-  const prediction = await new FashnProvider().getGenerationStatus(reference);
+  const prediction = await createFashionProvider().getGenerationStatus(reference);
   if (prediction.creditsUsed !== undefined)
     await updateJob(job.id, { provider_credits_milli: prediction.creditsUsed * 1000 });
   if (prediction.status === "failed") {

@@ -3,6 +3,23 @@ import { hasSupabaseConfig } from "@/lib/supabase/admin";
 import { requireUser } from "@/server/auth/context";
 import { ApiError } from "@/server/auth/security";
 import { getAssetSignedUrl } from "@/server/storage/media";
+import { activeProviderLabel, getProviderCapabilities } from "@/server/ai/provider";
+
+/** Lets the studio offer only the options the configured provider can honour. */
+function aiSummary() {
+  return {
+    provider: activeProviderLabel(),
+    capabilities: getProviderCapabilities().map(
+      ({ operation, enabled, lifecycle, supportedResolutions, supportedDurations }) => ({
+        operation,
+        enabled,
+        lifecycle,
+        supportedResolutions,
+        supportedDurations,
+      }),
+    ),
+  };
+}
 
 export async function getWorkspace(organizationId?: string, page = 1) {
   const empty = {
@@ -18,7 +35,7 @@ export async function getWorkspace(organizationId?: string, page = 1) {
     tryOnSessions: [],
     packages: [],
   };
-  if (!hasSupabaseConfig()) return { configured: false, ...empty };
+  if (!hasSupabaseConfig()) return { configured: false, ai: aiSummary(), ...empty };
   const { user, client } = await requireUser();
   let membership = client
     .from("organization_members")
@@ -200,6 +217,7 @@ export async function getWorkspace(organizationId?: string, page = 1) {
   const orgRow = organization as Record<string, unknown>;
   return {
     configured: true,
+    ai: aiSummary(),
     user: {
       id: user.id,
       email: user.email,

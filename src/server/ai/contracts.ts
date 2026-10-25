@@ -53,6 +53,13 @@ export interface ProviderCapability {
   enabled: boolean;
   minInputDimension: number;
   supportedViews: readonly string[];
+  /** Option values the provider can honour. Absent means every value the schema accepts. */
+  supportedResolutions?: readonly string[];
+  supportedDurations?: readonly number[];
+}
+
+export interface GarmentContext {
+  category?: string;
 }
 
 export interface FashionProvider {
@@ -62,6 +69,7 @@ export interface FashionProvider {
     product: string,
     person: string,
     options: TryOnOptions,
+    garment?: GarmentContext,
   ): Promise<{ id: string }>;
   getGenerationStatus(id: string): Promise<Prediction>;
   getProviderCapabilities(): ProviderCapability[];
@@ -77,6 +85,39 @@ export class ProviderError extends Error {
     super(message);
     this.name = "ProviderError";
   }
+}
+
+export function requireEnabledCapability(
+  capabilities: ProviderCapability[],
+  operation: GenerationOperation,
+): ProviderCapability {
+  const capability = capabilities.find((item) => item.operation === operation);
+  if (!capability?.enabled)
+    throw new ProviderError(
+      "This generation capability is unavailable. The workspace owner must configure and enable it.",
+      "capability_disabled",
+    );
+  return capability;
+}
+
+/** Returns a customer-safe explanation when the provider cannot honour a requested option. */
+export function unsupportedOptionMessage(
+  capability: ProviderCapability,
+  options: { resolution?: string; duration?: number },
+): string | null {
+  if (
+    options.resolution &&
+    capability.supportedResolutions &&
+    !capability.supportedResolutions.includes(options.resolution)
+  )
+    return `The configured AI provider supports ${capability.supportedResolutions.join(", ")} output only.`;
+  if (
+    options.duration !== undefined &&
+    capability.supportedDurations &&
+    !capability.supportedDurations.includes(options.duration)
+  )
+    return `The configured AI provider supports ${capability.supportedDurations.join(", ")}-second videos only.`;
+  return null;
 }
 
 /** Provider billing units, not the customer's Atelier credit price. */

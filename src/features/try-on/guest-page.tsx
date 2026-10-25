@@ -21,6 +21,7 @@ type SessionData = {
   job?: { id: string; status: string };
   outputs: { id: string; url: string }[];
   consentVersion: string;
+  processor: string;
   available: boolean;
 };
 export default function GuestTryOn({ token }: { token: string }) {
@@ -222,9 +223,10 @@ export default function GuestTryOn({ token }: { token: string }) {
               </p>
               <div className="mb-5">
                 <Notice>
-                  Your photograph will be sent to FASHN for an AI fashion visualization. It is not a
-                  guarantee of fit or accurate body measurements. The source photo is retained for
-                  up to 24 hours by default. Your result stays private within this session.
+                  Your photograph will be sent to {data.processor} for an AI fashion visualization.
+                  It is not a guarantee of fit or accurate body measurements. The source photo is
+                  retained for up to 24 hours by default. Your result stays private within this
+                  session.
                 </Notice>
               </div>
               <label className="check-label mb-5">

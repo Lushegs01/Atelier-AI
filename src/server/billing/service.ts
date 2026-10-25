@@ -1,7 +1,8 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { getAdminClient } from "@/lib/supabase/admin";
-import { getServerEnv } from "@/lib/env";
+import { aiProviderCredential, getServerEnv } from "@/lib/env";
+import { getProviderCapabilities } from "@/server/ai/provider";
 import {
   BillingError,
   normalizeGenerationOptions,
@@ -36,7 +37,7 @@ function assertOperationEnabled(operation: Operation) {
       : operation === "video"
         ? env.ENABLE_VIDEO_GENERATION
         : env.ENABLE_TRY_ON;
-  if (!enabled || !env.FASHN_API_KEY)
+  if (!enabled || !env[aiProviderCredential(env.AI_PROVIDER)])
     throw new BillingError(
       503,
       "This generation capability is not enabled.",
@@ -85,7 +86,10 @@ export async function quoteGeneration(input: {
     priceRuleId: rule.id as string,
     providerCreditsMilli: rule.provider_credits_milli as number,
     estimatedProviderCostMicrousd: rule.estimated_provider_cost_microusd as number | null,
-    lifecycle: operation === "video" ? "experimental" : "preview",
+    lifecycle: (
+      getProviderCapabilities().find((item) => item.operation === operation)?.lifecycle ??
+      "Experimental"
+    ).toLowerCase(),
   };
 }
 

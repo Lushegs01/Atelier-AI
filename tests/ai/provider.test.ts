@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FashnProvider, getProviderCapabilities } from "@/server/ai/fashn";
+import { FashnProvider, getFashnCapabilities } from "@/server/ai/fashn";
 import {
   estimateProviderCredits,
   imageOptionsSchema,
@@ -146,11 +146,11 @@ describe("FASHN adapter contracts (HTTP test doubles; no live AI calls)", () => 
 
   it("disables all unstable endpoints unless flags and credentials are configured", () => {
     vi.stubEnv("FASHN_API_KEY", "");
-    expect(getProviderCapabilities().every((capability) => !capability.enabled)).toBe(true);
+    expect(getFashnCapabilities().every((capability) => !capability.enabled)).toBe(true);
     vi.stubEnv("FASHN_API_KEY", "test-key");
     vi.stubEnv("ENABLE_VIDEO_GENERATION", "false");
     expect(
-      getProviderCapabilities().find((capability) => capability.operation === "video"),
+      getFashnCapabilities().find((capability) => capability.operation === "video"),
     ).toMatchObject({ lifecycle: "Experimental", enabled: false });
   });
 

@@ -126,13 +126,8 @@ vi.mock("@/lib/supabase/admin", () => ({
     },
   }),
 }));
-vi.mock("@/server/ai/fashn", () => ({
-  FashnProvider: class {
-    generateFashionImage = provider.generateFashionImage;
-    generateFashionVideo = provider.generateFashionVideo;
-    generateVirtualTryOn = provider.generateVirtualTryOn;
-    getGenerationStatus = provider.getGenerationStatus;
-  },
+vi.mock("@/server/ai/provider", () => ({
+  createFashionProvider: () => provider,
   assertCapabilityEnabled: vi.fn(),
 }));
 vi.mock("@/server/storage/media", () => ({
@@ -406,5 +401,27 @@ describe("generation lifecycle integration (database, queue, media and HTTP test
     });
     expect(state.available).toBe(12);
     expect(job().status).toBe("failed");
+  });
+
+  it("passes the garment category to a consented try-on submission", async () => {
+    const sessionId = "0d7c7f4e-2f0a-4a4e-9a51-6f3b2f8e1c11";
+    state.tables.try_on_sessions[0].id = sessionId;
+    state.tables.consents[0].try_on_session_id = sessionId;
+    Object.assign(job(), {
+      operation: "try_on",
+      source_asset_id: "customer",
+      options: { tryOnSessionId: sessionId },
+    });
+    state.tables.garments = [{ id: "garment", organization_id: organizationId, category: "dress" }];
+    provider.generateVirtualTryOn.mockResolvedValue({ id: "tryon-event" });
+    await expect(submitGenerationOnce(jobId, organizationId)).resolves.toEqual({
+      id: "tryon-event",
+    });
+    expect(provider.generateVirtualTryOn).toHaveBeenCalledWith(
+      "https://storage.example/short-lived-source",
+      "https://storage.example/short-lived-source",
+      expect.objectContaining({ tryOnSessionId: sessionId }),
+      { category: "dress" },
+    );
   });
 });

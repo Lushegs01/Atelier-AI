@@ -3,7 +3,7 @@ import { getAdminClient } from "@/lib/supabase/admin";
 import { requirePlatformAdmin, consumeRateLimit } from "@/server/auth/context";
 import { ApiError } from "@/server/auth/security";
 import { assertDatabaseResult, readJson, route } from "@/server/services/http";
-import { getProviderCapabilities } from "@/server/ai/fashn";
+import { getProviderCapabilities } from "@/server/ai/provider";
 import {
   reconcilePendingPayments,
   requestPaymentRefund,

@@ -1,9 +1,11 @@
 import "server-only";
 import { getAdminClient, hasSupabaseConfig } from "@/lib/supabase/admin";
 import { ApiError, assertSessionUsable, validateGuestToken } from "@/server/auth/security";
+import { activeProviderName } from "@/server/ai/provider";
 import { assertDatabaseResult } from "./http";
 
-export const CONSENT_VERSION = "2026-10-24-v1";
+/** The disclosure names the processor, so each provider carries its own consent version. */
+export const CONSENT_VERSION = `2026-10-25-v2-${activeProviderName()}`;
 
 export async function getGuestSession(token: string, forSubmission = false, forDeletion = false) {
   const hash = validateGuestToken(token);

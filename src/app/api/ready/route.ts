@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { environmentReadiness } from "@/lib/env";
 import { getAdminClient } from "@/lib/supabase/admin";
-import { getProviderCapabilities } from "@/server/ai/fashn";
+import { getProviderCapabilities } from "@/server/ai/provider";
 
 export async function GET() {
   const environment = environmentReadiness();

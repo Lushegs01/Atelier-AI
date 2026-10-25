@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { getAdminClient } from "@/lib/supabase/admin";
+import { providerOutputHosts } from "@/server/ai/provider";
 import {
   createThumbnail,
   MediaValidationError,
@@ -297,8 +298,13 @@ export async function transferProviderOutput(input: {
     .is("deleted_at", null)
     .maybeSingle();
   if (existing) return existing as StoredAsset;
-  const url = validateProviderOutputUrl(input.url);
+  const url = validateProviderOutputUrl(input.url, providerOutputHosts());
   const response = await fetch(url, {
+    // A private duplicate of a Hugging Face Space serves its files only to its owner's token.
+    headers:
+      url.hostname.endsWith(".hf.space") && process.env.HF_TOKEN
+        ? { Authorization: `Bearer ${process.env.HF_TOKEN}` }
+        : undefined,
     redirect: "error",
     signal: AbortSignal.timeout(50_000),
     cache: "no-store",
