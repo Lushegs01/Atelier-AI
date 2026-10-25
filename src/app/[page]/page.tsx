@@ -26,7 +26,7 @@ export default async function PublicPage({ params }: { params: Promise<{ page: s
     features: [
       "Your creative toolkit",
       "A studio for the whole story.",
-      "Start with a garment. Give it a setting, bring it into motion, and help a customer imagine wearing it.",
+      "Start with a garment. Give it a setting and help a customer imagine wearing it. Available tools follow your studio’s selected model.",
     ],
     pricing: [
       "Prepaid. At your pace.",
@@ -67,9 +67,10 @@ export default async function PublicPage({ params }: { params: Promise<{ page: s
             <Pricing />
             <div className="mt-8">
               <Notice>
-                Photo and try-on use FASHN Preview capabilities; fashion video is Experimental.
-                Availability and prices must be enabled by the operator after staging verification.
-                A virtual try-on is an AI visualization, not a guarantee of fit.
+                The default Qwen Image Edit workflow creates experimental still images. Customer
+                visualization is separately enabled and does not verify fit. Video requires a
+                separately configured supported provider. Generation credits cover the studio’s
+                processing costs; open model weights do not make GPU hosting free.
               </Notice>
             </div>
           </>
@@ -87,7 +88,7 @@ export default async function PublicPage({ params }: { params: Promise<{ page: s
               {
                 icon: Film,
                 title: "The fashion film",
-                text: "Animate an approved image into a 5 or 10 second clip at supported resolutions. Motion is illustrative; it does not prove fabric physics.",
+                text: "Qwen Image Edit creates still images. Video is available only when a separate supported provider is configured and enabled. Existing films remain in your library.",
                 image: editorialImages.detail,
                 route: "/app/videos",
               },
@@ -147,7 +148,7 @@ export default async function PublicPage({ params }: { params: Promise<{ page: s
                 },
                 {
                   title: "Compare, approve, and share",
-                  text: "Review silhouette, colour, print, embroidery and construction against your source. Download the result or create a fashion film from an eligible image.",
+                  text: "Review silhouette, colour, print, embroidery and construction against your source. Download approved results. Optional motion tools appear only with a supported enabled provider.",
                 },
               ].map(({ title, text }, i) => (
                 <div className="panel p-7 flex gap-6" key={title}>
@@ -171,7 +172,7 @@ export default async function PublicPage({ params }: { params: Promise<{ page: s
         {page === "privacy" && (
           <div className="prose">
             <Notice tone="warning">
-              Initial policy, version 2026-10-24. The operator must supply its legal identity,
+              Initial policy, version 2026-10-25. The operator must supply its legal identity,
               support contact, legal basis and jurisdiction-specific disclosures before launch. This
               document requires qualified legal review.
             </Notice>
@@ -188,15 +189,25 @@ export default async function PublicPage({ params }: { params: Promise<{ page: s
               include the disclosure version and session. We do not request measurements or
               unnecessary personal details. Promotional use is not included in this consent.
             </p>
-            <h2>Third-party processing</h2>
+            <h2>Image processing and service providers</h2>
             <p>
-              Supabase handles authentication, database and private storage. FASHN processes images
-              for enabled AI capabilities. Inngest orchestrates background jobs. Paystack processes
-              payments; Atelier AI does not store card numbers. Hosting and optional Sentry
-              monitoring are configured by the operator.
+              The default image editor is Qwen Image Edit, hosted on a GPU service operated for the
+              studio. Photographs are sent to that configured host for the requested image edit;
+              they are not sent to FASHN when Qwen is selected. The operator must identify its GPU
+              host, region, access controls and any infrastructure processors before launch. Qwen
+              customer visualization is experimental and may change garment, body or identity
+              details.
             </p>
             <p>
-              FASHN describes transient processing and hosted-output retention in its{" "}
+              Supabase handles authentication, database and private storage. Inngest orchestrates
+              jobs using application identifiers. Paystack processes payments; Atelier AI does not
+              store card numbers. Hosting and optional Sentry monitoring are configured by the
+              operator. Customer consent identifies the actual provider pinned to that invitation.
+              Existing jobs keep their original provider when a studio changes configuration.
+            </p>
+            <p>
+              A studio may separately configure FASHN instead of Qwen. Only those FASHN jobs send
+              photographs to FASHN and its subprocessors, under its{" "}
               <a
                 href="https://docs.fashn.ai/api-overview/data-retention-privacy"
                 target="_blank"
@@ -204,14 +215,16 @@ export default async function PublicPage({ params }: { params: Promise<{ page: s
               >
                 data retention documentation
               </a>
-              . Provider retention and account-specific terms must be checked before launch.
-              Deletion from Atelier AI does not by itself confirm removal of every upstream or
-              backup copy.
+              . Provider and GPU-host retention and account-specific terms must be checked before
+              launch. Deletion from Atelier AI does not by itself confirm removal of every upstream
+              or backup copy.
             </p>
             <h2>Retention and deletion</h2>
             <p>
               The default customer source-photo retention is 24 hours. The scheduled cleanup removes
               expired source images, expired sessions’ guest results and queued deletion requests.
+              The Qwen service uses private temporary input files and expiring results; its separate
+              GPU storage and backups require the operator’s retention and deletion controls.
               Workspace garment and campaign assets remain until their authorized owner deletes
               them. Financial and audit records have separate legal retention requirements, which
               the operator must define.
@@ -233,7 +246,7 @@ export default async function PublicPage({ params }: { params: Promise<{ page: s
         {page === "terms" && (
           <div className="prose">
             <Notice tone="warning">
-              Initial terms, version 2026-10-24. Legal identity, contact, dispute process,
+              Initial terms, version 2026-10-25. Legal identity, contact, dispute process,
               applicable law and refund terms require operator completion and qualified legal review
               before public launch.
             </Notice>
@@ -258,6 +271,11 @@ export default async function PublicPage({ params }: { params: Promise<{ page: s
               result is not automatically refunded because you dislike it. Duplicate verified
               payment notifications issue value only once. Statutory consumer rights take precedence
               over any operator policy.
+            </p>
+            <p>
+              Open model weights do not include free compute. The operator may price generation
+              credits to cover GPU time, storage and service operations. No free hosted inference
+              entitlement is included. Qwen Image Edit does not generate video.
             </p>
             <h2>Service availability</h2>
             <p>

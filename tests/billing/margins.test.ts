@@ -2,6 +2,18 @@ import { describe, expect, it } from "vitest";
 import { calculateGenerationMargin } from "@/server/billing/margins";
 
 describe("integer monetary margin accounting", () => {
+  it("treats Qwen GPU cost as unknown until direct cost is supplied, never zero FASHN units", () => {
+    const qwen = {
+      revenueKobo: 180000n,
+      providerCreditsMilli: 0n,
+      providerUnitCostMicrousd: 75000n,
+      ngnPerUsdMicros: 1600000000n,
+    };
+    expect(calculateGenerationMargin(qwen).providerCostKobo).toBeNull();
+    expect(
+      calculateGenerationMargin({ ...qwen, directProviderCostMicrousd: 150000n }).providerCostKobo,
+    ).toBe(24000n);
+  });
   it("keeps unknown provider cost and foreign exchange unknown", () => {
     expect(
       calculateGenerationMargin({

@@ -15,6 +15,36 @@ export class BillingError extends Error {
 }
 
 export function safeBillingDatabaseError(message: string): Error {
+  if (message.includes("Try-on provider changed"))
+    return new BillingError(
+      409,
+      "The AI provider for this invitation changed. Ask the designer for a new link.",
+      "PROVIDER_CHANGED",
+    );
+  if (message.includes("Provider cost review required"))
+    return new BillingError(
+      503,
+      "GPU cost review is required before this operation is available.",
+      "PROVIDER_COST_UNREVIEWED",
+    );
+  if (message.includes("Provider capability unavailable"))
+    return new BillingError(
+      503,
+      "The selected provider does not support this operation.",
+      "GENERATION_DISABLED",
+    );
+  if (message.includes("Provider source incompatible"))
+    return new BillingError(
+      422,
+      "Qwen requires compatible source photographs at least 256 pixels wide and high, up to 4 MB.",
+      "SOURCE_INCOMPATIBLE",
+    );
+  if (message.includes("Provider options unsupported"))
+    return new BillingError(
+      422,
+      "Qwen supports one balanced 1K PNG per request.",
+      "PROVIDER_OPTIONS_UNSUPPORTED",
+    );
   if (message.includes("Insufficient credits"))
     return new BillingError(
       402,
@@ -86,6 +116,26 @@ const videoOptionsSchema = z
 /** Customer prices are selected from a finite server-owned matrix. */
 export function normalizeGenerationOptions(operation: Operation, input: unknown = {}) {
   return operation === "video" ? videoOptionsSchema.parse(input) : imageOptionsSchema.parse(input);
+}
+export function normalizeProviderGenerationOptions(
+  provider: "qwen" | "fashn",
+  operation: Operation,
+  input: unknown = {},
+) {
+  if (provider === "qwen" && operation === "video")
+    throw new BillingError(
+      503,
+      "Qwen Image Edit creates still images. Video is unavailable with this provider.",
+      "GENERATION_DISABLED",
+    );
+  const options = normalizeGenerationOptions(operation, input);
+  if (provider === "qwen" && "outputFormat" in options && options.outputFormat !== "png")
+    throw new BillingError(
+      422,
+      "Qwen currently supports one balanced 1K PNG per request.",
+      "PROVIDER_OPTIONS_UNSUPPORTED",
+    );
+  return options;
 }
 export function pricingOptionKey(operation: Operation, input: unknown = {}) {
   const options = normalizeGenerationOptions(operation, input);

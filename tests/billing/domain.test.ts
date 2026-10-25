@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   normalizeGenerationOptions,
+  normalizeProviderGenerationOptions,
   paymentDomain,
   pricingOptionKey,
   validateVerifiedPayment,
@@ -67,6 +68,18 @@ describe("Paystack boundary validation", () => {
 });
 
 describe("server owned generation pricing", () => {
+  it("rejects unpriced Qwen JPEG and video options before reservation", () => {
+    expect(() =>
+      normalizeProviderGenerationOptions("qwen", "photo", { outputFormat: "jpeg" }),
+    ).toThrow(/balanced 1K PNG/);
+    expect(() => normalizeProviderGenerationOptions("qwen", "video", {})).toThrow(/still images/);
+    expect(normalizeProviderGenerationOptions("qwen", "try_on", {})).toMatchObject({
+      resolution: "1k",
+      quality: "balanced",
+      outputFormat: "png",
+      numImages: 1,
+    });
+  });
   it("normalizes release image settings to balanced 1k and one image", () => {
     expect(normalizeGenerationOptions("photo", {})).toEqual({
       resolution: "1k",

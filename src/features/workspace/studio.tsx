@@ -20,6 +20,7 @@ import { Badge, Button, Dialog, Empty, Select, Input, Notice, useToast } from "@
 import { PageHeading, SetupNotice, Onboarding, AiDisclosure } from "./common";
 import { useWorkspace, apiRequest } from "./context";
 import { GarmentUpload } from "./garments";
+import { operationAvailability } from "./provider";
 type Quote = {
   quote: { credits: number; available: number; sufficient: boolean; lifecycle: string };
   quoteToken: string;
@@ -64,6 +65,11 @@ export default function Studio({ video = false }: { video?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [key, setKey] = useState("");
   const [error, setError] = useState("");
+  const availability = operationAvailability(
+    video ? "video" : "photo",
+    data.capabilities,
+    data.provider,
+  );
   const garment = data.garments.find((g) => g.id === garmentId);
   const source = data.outputs.find((o) => o.asset_id === sourceId);
   const sourceGarment = data.garments.find((g) => g.assets?.some((a) => a.id === sourceId));
@@ -87,6 +93,7 @@ export default function Studio({ video = false }: { video?: boolean }) {
   };
   async function getQuote() {
     setError("");
+    if (!availability.enabled) return notify(availability.reason, true);
     if (!data.organization)
       return notify("Connect your account and create a workspace first.", true);
     if (video ? !sourceId : !garmentId)
@@ -130,6 +137,46 @@ export default function Studio({ video = false }: { video?: boolean }) {
       setBusy(false);
     }
   }
+  if (video && !availability.enabled) {
+    return (
+      <>
+        <PageHeading
+          title="Your collection, in motion."
+          description="Video availability depends on your studio’s selected generation model."
+          action={<Badge>{data.provider?.label || "Video"} · unavailable</Badge>}
+        />
+        <SetupNotice />
+        <section className="panel panel-padded">
+          <Empty
+            icon={<Film size={25} strokeWidth={1.3} />}
+            title={
+              data.provider?.id === "qwen"
+                ? "Still images, with a new perspective."
+                : "Fashion video is currently unavailable"
+            }
+            description={`${availability.reason} Existing films remain in your gallery. No video credits can be reserved here.`}
+            action={
+              <Button href="/app/studio">
+                Create a model photograph <ArrowUpRight size={14} />
+              </Button>
+            }
+          />
+          <div className="button-row justify-center">
+            <Button href="/app/gallery?type=video" variant="secondary">
+              Review existing films
+            </Button>
+          </div>
+        </section>
+        <div className="mt-6">
+          <Notice>
+            {data.provider?.id === "qwen"
+              ? "Qwen Image Edit is an experimental still-image workflow. It has no video engine. A studio may enable a separate supported provider after reviewing its costs and privacy terms."
+              : "Video generation is disabled for this studio. Your studio operator can review availability, privacy terms and costs before enabling it."}
+          </Notice>
+        </div>
+      </>
+    );
+  }
   return (
     <>
       <PageHeading
@@ -139,10 +186,23 @@ export default function Studio({ video = false }: { video?: boolean }) {
             ? "Turn an approved photograph into a short fashion film."
             : "Your garment is the starting point. You set the creative direction."
         }
-        action={<Badge>{video ? "Experimental" : "Preview"} capability</Badge>}
+        action={
+          <Badge>
+            {data.provider?.label || "AI"} · {availability.capability?.lifecycle || "Experimental"}
+          </Badge>
+        }
       />
       <SetupNotice />
       <Onboarding />
+      <div className="mb-5">
+        <Notice tone={availability.enabled ? undefined : "warning"}>
+          {availability.enabled
+            ? data.provider?.id === "qwen"
+              ? "Qwen Image Edit uses your garment photo to create an experimental edited photograph. Review garment details carefully; this is not a specialized garment-fidelity guarantee."
+              : "Your selected provider is enabled. Review the original garment, generation settings and price before submitting."
+            : availability.reason}
+        </Notice>
+      </div>
       <div className="mode-tabs max-w-xl" aria-label="Choose a creative workflow">
         <Link className={!video ? "active" : ""} href="/app/studio">
           <Camera size={14} className="inline mr-2" />
@@ -176,8 +236,9 @@ export default function Studio({ video = false }: { video?: boolean }) {
                   {data.outputs
                     .filter(
                       (o) =>
-                        o.asset?.mime_type?.startsWith("image/") ||
-                        o.asset?.kind === "generated_image",
+                        o.operation !== "try_on" &&
+                        (o.asset?.mime_type?.startsWith("image/") ||
+                          o.asset?.kind === "generated_image"),
                     )
                     .map((o, i) => (
                       <option key={o.id} value={o.asset_id}>
@@ -353,7 +414,9 @@ export default function Studio({ video = false }: { video?: boolean }) {
                 <label className="field">
                   Image quality
                   <div className="input flex items-center justify-between">
-                    <span>Balanced · 1K</span>
+                    <span>
+                      {data.provider?.id === "qwen" ? "Image edit · 1K target" : "Balanced · 1K"}
+                    </span>
                     <Check size={13} className="text-secondary" />
                   </div>
                   <span className="field-hint">One image per request</span>
@@ -413,7 +476,12 @@ export default function Studio({ video = false }: { video?: boolean }) {
               <Notice tone="error">{error}</Notice>
             </div>
           )}
-          <Button className="w-full" busy={busy} onClick={getQuote}>
+          <Button
+            className="w-full"
+            busy={busy}
+            disabled={!availability.enabled}
+            onClick={getQuote}
+          >
             Review cost & create <ArrowRight size={15} />
           </Button>
           <div className="mt-4">

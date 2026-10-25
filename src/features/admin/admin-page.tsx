@@ -212,9 +212,11 @@ export default function AdminPage({ resource }: { resource: string }) {
         {resource === "providers" && (
           <div className="mt-6">
             <Notice>
-              Provider availability is controlled through typed deployment environment flags. Photo
-              and try-on are Preview; video is Experimental. Change flags through a reviewed
-              deployment, then verify readiness.
+              Provider availability follows the selected backend and deployment flags. Qwen Image
+              Edit offers experimental still images and separately enabled customer visualization;
+              it has no video engine. Optional FASHN features retain their Preview or Experimental
+              lifecycle. Existing jobs keep their original provider. Verify capabilities and costs
+              after a reviewed configuration change.
             </Notice>
           </div>
         )}

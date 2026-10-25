@@ -1,4 +1,7 @@
 import "server-only";
+import { getQwenOutputRequest } from "@/server/ai/endpoint";
+import { requestQwenPredictionDeletion } from "@/server/ai/cleanup";
+import { getConsentVersion } from "@/server/services/try-on";
 import { createHash, randomUUID } from "node:crypto";
 import { getAdminClient } from "@/lib/supabase/admin";
 import {
@@ -185,7 +188,7 @@ export async function signAsset(input: {
   const admin = getAdminClient();
   const { data: asset, error } = await admin
     .from("assets")
-    .select("storage_path,thumbnail_path,expires_at,generation_job_id")
+    .select("storage_path,thumbnail_path,expires_at,generation_job_id,kind")
     .eq("id", input.assetId)
     .eq("organization_id", input.organizationId)
     .is("deleted_at", null)
@@ -195,13 +198,17 @@ export async function signAsset(input: {
   if (asset.generation_job_id) {
     const { data: parent, error: parentError } = await admin
       .from("generation_jobs")
-      .select("status")
+      .select("status,operation")
       .eq("id", asset.generation_job_id)
       .eq("organization_id", input.organizationId)
       .single();
     if (parentError || parent?.status !== "succeeded")
       throw new MediaValidationError("This generation is not ready for download.");
+    if (parent.operation === "try_on")
+      await assertCustomerSigningConsent(input.organizationId, "job_id", asset.generation_job_id);
   }
+  if (asset.kind === "customer_photo")
+    await assertCustomerSigningConsent(input.organizationId, "customer_asset_id", input.assetId);
   assertOwnedPath(asset.storage_path, input.organizationId);
   const requestedPath =
     input.thumbnail && asset.thumbnail_path ? asset.thumbnail_path : asset.storage_path;
@@ -221,6 +228,41 @@ export async function signAsset(input: {
 
 export const getAssetSignedUrl = signAsset;
 
+async function assertCustomerSigningConsent(
+  organizationId: string,
+  field: "job_id" | "customer_asset_id",
+  id: string,
+) {
+  const admin = getAdminClient();
+  const { data: session, error } = await admin
+    .from("try_on_sessions")
+    .select("id,provider,revoked_at,deleted_at,expires_at")
+    .eq(field, id)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (
+    error ||
+    !session ||
+    session.revoked_at ||
+    session.deleted_at ||
+    !session.expires_at ||
+    new Date(session.expires_at).getTime() <= Date.now() ||
+    (session.provider !== "qwen" && session.provider !== "fashn")
+  )
+    throw new MediaValidationError("Customer access has expired or been withdrawn.");
+  const { data: consent, error: consentError } = await admin
+    .from("consents")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("try_on_session_id", session.id)
+    .eq("version", getConsentVersion(session.provider))
+    .is("withdrawn_at", null)
+    .limit(1)
+    .maybeSingle();
+  if (consentError || !consent)
+    throw new MediaValidationError("Customer consent has been withdrawn.");
+}
+
 export async function deletePrivateAsset(input: {
   organizationId: string;
   assetId: string;
@@ -228,13 +270,18 @@ export async function deletePrivateAsset(input: {
   const admin = getAdminClient();
   const { data: asset, error } = await admin
     .from("assets")
-    .select("storage_path,thumbnail_path")
+    .select("storage_path,thumbnail_path,generation_job_id")
     .eq("id", input.assetId)
     .eq("organization_id", input.organizationId)
     .is("deleted_at", null)
     .maybeSingle();
   if (error) throw new Error("The asset could not be loaded.");
   if (!asset) return;
+  if (asset.generation_job_id)
+    await requestQwenPredictionDeletion({
+      organizationId: input.organizationId,
+      jobId: asset.generation_job_id,
+    });
   assertOwnedPath(asset.storage_path, input.organizationId);
   const paths = [asset.storage_path];
   if (asset.thumbnail_path) {
@@ -283,6 +330,8 @@ export async function transferProviderOutput(input: {
   index: number;
   url: string;
   isVideo: boolean;
+  provider?: "fashn" | "qwen";
+  providerReference?: string;
   garmentId?: string;
   actorId?: string | null;
   expiresAt?: string;
@@ -297,8 +346,15 @@ export async function transferProviderOutput(input: {
     .is("deleted_at", null)
     .maybeSingle();
   if (existing) return existing as StoredAsset;
-  const url = validateProviderOutputUrl(input.url);
+  const transfer =
+    input.provider === "qwen"
+      ? getQwenOutputRequest(input.url, input.providerReference || "")
+      : { url: validateProviderOutputUrl(input.url), headers: undefined };
+  if (input.provider === "qwen" && input.isVideo)
+    throw new MediaValidationError("Qwen cannot return a fashion video.");
+  const url = transfer.url;
   const response = await fetch(url, {
+    headers: transfer.headers,
     redirect: "error",
     signal: AbortSignal.timeout(50_000),
     cache: "no-store",

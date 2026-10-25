@@ -19,7 +19,7 @@ export async function POST(request: Request) {
         .strict()
         .parse(await readJson(request));
       const tenant = await requireTenant(input.organizationId, "create");
-      requireCapability("try_on");
+      const capability = requireCapability("try_on");
       await consumeRateLimit(`tryon-create:${tenant.organizationId}`, 30, 3600);
       const { data: garment, error } = await tenant.client
         .from("garments")
@@ -31,6 +31,34 @@ export async function POST(request: Request) {
         .maybeSingle();
       assertDatabaseResult(error);
       if (!garment) throw new ApiError(404, "This garment was not found.", "NOT_FOUND");
+      let sourceQuery = tenant.client
+        .from("assets")
+        .select("id,width,height,byte_size")
+        .eq("organization_id", tenant.organizationId)
+        .eq("garment_id", garment.id)
+        .in("kind", ["original", "garment_original"])
+        .in("view", [...capability.supportedViews])
+        .gte("width", capability.minInputDimension)
+        .gte("height", capability.minInputDimension)
+        .is("deleted_at", null);
+      if (capability.provider === "qwen")
+        sourceQuery = sourceQuery.lte("byte_size", 4 * 1024 * 1024);
+      const { data: source, error: sourceError } = await sourceQuery
+        .order("created_at")
+        .limit(1)
+        .maybeSingle();
+      assertDatabaseResult(sourceError);
+      if (
+        !source ||
+        source.width < capability.minInputDimension ||
+        source.height < capability.minInputDimension ||
+        (capability.provider === "qwen" && source.byte_size > 4 * 1024 * 1024)
+      )
+        throw new ApiError(
+          422,
+          `Upload a compatible garment photograph at least ${capability.minInputDimension} pixels wide and high before creating a link.`,
+          "SOURCE_INCOMPATIBLE",
+        );
       const quote = await quoteGeneration({
         organizationId: tenant.organizationId,
         operation: "try_on",
@@ -52,6 +80,8 @@ export async function POST(request: Request) {
           expires_at: new Date(Date.now() + input.expiresInHours * 3600000).toISOString(),
           quoted_credits: quote.credits,
           price_rule_id: quote.priceRuleId,
+          provider: quote.provider,
+          provider_model: quote.providerModel,
           created_by: tenant.user.id,
         })
         .select("id,expires_at,max_uses")

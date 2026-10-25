@@ -5,3 +5,7 @@ coverage
 playwright-report
 test-results
 public
+.local
+.venv
+inference/qwen/data
+inference/qwen/weights

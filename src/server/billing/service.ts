@@ -4,7 +4,7 @@ import { getAdminClient } from "@/lib/supabase/admin";
 import { getServerEnv } from "@/lib/env";
 import {
   BillingError,
-  normalizeGenerationOptions,
+  normalizeProviderGenerationOptions,
   pricingOptionKey,
   operationSchema,
   safeBillingDatabaseError,
@@ -13,6 +13,12 @@ import {
   type Operation,
 } from "./domain";
 import { PaystackProvider } from "./paystack";
+import {
+  assertCapabilityEnabled,
+  getActiveProviderId,
+  getProviderCapabilities,
+  type ProviderId,
+} from "@/server/ai/registry";
 
 export interface GenerationRequest {
   organizationId: string;
@@ -26,22 +32,35 @@ export interface GenerationRequest {
   tryOnSessionId?: string;
   expectedCredits?: number;
   expectedPriceRuleId?: string;
+  /** Trusted server context only. Browser generation input never accepts a provider. */
+  provider?: ProviderId;
 }
 
-function assertOperationEnabled(operation: Operation) {
-  const env = getServerEnv();
-  const enabled =
-    operation === "photo"
-      ? env.ENABLE_PHOTO_GENERATION
-      : operation === "video"
-        ? env.ENABLE_VIDEO_GENERATION
-        : env.ENABLE_TRY_ON;
-  if (!enabled || !env.FASHN_API_KEY)
+function assertOperationEnabled(operation: Operation, pinnedProvider?: ProviderId) {
+  const provider = getActiveProviderId();
+  if (pinnedProvider && pinnedProvider !== provider)
+    throw new BillingError(
+      409,
+      "The selected AI provider changed. Review a new quote or create a new customer link.",
+      "PROVIDER_CHANGED",
+    );
+  try {
+    assertCapabilityEnabled(operation, provider);
+  } catch {
     throw new BillingError(
       503,
       "This generation capability is not enabled.",
       "GENERATION_DISABLED",
     );
+  }
+  const capability = getProviderCapabilities(provider).find((item) => item.operation === operation);
+  if (!capability)
+    throw new BillingError(
+      503,
+      "This generation capability is unavailable.",
+      "GENERATION_DISABLED",
+    );
+  return { provider, capability };
 }
 
 export async function quoteGeneration(input: {
@@ -50,13 +69,14 @@ export async function quoteGeneration(input: {
   options?: Record<string, unknown>;
 }) {
   const operation = operationSchema.parse(input.operation);
-  assertOperationEnabled(operation);
-  const options = normalizeGenerationOptions(operation, input.options);
+  const { provider, capability } = assertOperationEnabled(operation);
+  const options = normalizeProviderGenerationOptions(provider, operation, input.options);
   const optionKey = pricingOptionKey(operation, input.options);
   const db = getAdminClient();
   const { data: rule, error } = await db
     .from("generation_price_rules")
     .select("*")
+    .eq("provider", provider)
     .eq("operation", operation)
     .eq("option_key", optionKey)
     .eq("enabled", true)
@@ -67,6 +87,18 @@ export async function quoteGeneration(input: {
       503,
       "Pricing is awaiting review. This operation is unavailable.",
       "PRICING_DISABLED",
+    );
+  if (rule.provider_model !== capability.model)
+    throw new BillingError(
+      503,
+      "The reviewed pricing model does not match the selected provider.",
+      "PRICING_MODEL_MISMATCH",
+    );
+  if (provider === "qwen" && rule.estimated_provider_cost_microusd === null)
+    throw new BillingError(
+      503,
+      "GPU cost must be measured and reviewed before generation can be enabled.",
+      "PROVIDER_COST_UNREVIEWED",
     );
   const { data: account, error: balanceError } = await db
     .from("credit_accounts")
@@ -80,21 +112,24 @@ export async function quoteGeneration(input: {
     reserved: account.reserved as number,
     sufficient: account.available >= rule.credits,
     operation,
+    provider,
+    providerModel: rule.provider_model as string,
     options,
     optionKey,
     priceRuleId: rule.id as string,
     providerCreditsMilli: rule.provider_credits_milli as number,
     estimatedProviderCostMicrousd: rule.estimated_provider_cost_microusd as number | null,
-    lifecycle: operation === "video" ? "experimental" : "preview",
+    lifecycle: capability.lifecycle.toLowerCase(),
   };
 }
 
 export async function reserveGeneration(input: GenerationRequest) {
   const operation = operationSchema.parse(input.operation);
-  assertOperationEnabled(operation);
-  const options = normalizeGenerationOptions(operation, input.options);
+  const { provider } = assertOperationEnabled(operation, input.provider);
+  const options = normalizeProviderGenerationOptions(provider, operation, input.options);
   const db = getAdminClient();
   const { data, error } = await db.rpc("reserve_generation", {
+    p_provider: provider,
     p_organization_id: input.organizationId,
     p_actor_id: input.actorId,
     p_operation: operation,

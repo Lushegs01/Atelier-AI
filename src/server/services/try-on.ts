@@ -2,8 +2,38 @@ import "server-only";
 import { getAdminClient, hasSupabaseConfig } from "@/lib/supabase/admin";
 import { ApiError, assertSessionUsable, validateGuestToken } from "@/server/auth/security";
 import { assertDatabaseResult } from "./http";
+import {
+  getActiveProviderId,
+  getProviderCapabilities,
+  type ProviderId,
+} from "@/server/ai/registry";
 
-export const CONSENT_VERSION = "2026-10-24-v1";
+export const CONSENT_VERSION = "2026-10-25-qwen-v1";
+export function getConsentVersion(provider: ProviderId) {
+  return provider === "qwen" ? CONSENT_VERSION : "2026-10-24-v1";
+}
+export function providerDisclosure(provider: ProviderId, operation: "photo" | "try_on" = "photo") {
+  const capability = getProviderCapabilities(provider).find((item) => item.operation === operation);
+  return {
+    id: provider,
+    label: provider === "qwen" ? "Qwen Image Edit" : "FASHN",
+    model: capability?.model || "",
+    lifecycle: capability?.lifecycle || "Experimental",
+    disclosure:
+      provider === "qwen"
+        ? "Your photograph and the selected garment will be processed by the operator’s privately hosted Qwen Image Edit GPU service for this requested visualization. This experimental image-editing workflow has not been validated as a garment-fitting or body-measurement service and may change garment details or appearance. Results remain private and are not reused for promotion or training by this application."
+        : "Your photograph and the selected garment will be sent to FASHN for this requested AI visualization. FASHN and its subprocessors process the photographs under their retention policies. Results may change garment details or appearance; this is not a fit or body-measurement service. Results remain private and are not reused for promotion by this application.",
+  };
+}
+export function requireSessionProvider(provider: string) {
+  if ((provider !== "qwen" && provider !== "fashn") || provider !== getActiveProviderId())
+    throw new ApiError(
+      409,
+      "This invitation uses a provider that is no longer selected. Ask the designer for a new link.",
+      "PROVIDER_CHANGED",
+    );
+  return provider;
+}
 
 export async function getGuestSession(token: string, forSubmission = false, forDeletion = false) {
   const hash = validateGuestToken(token);
@@ -13,7 +43,7 @@ export async function getGuestSession(token: string, forSubmission = false, forD
   const { data, error } = await admin
     .from("try_on_sessions")
     .select(
-      "id,organization_id,garment_id,expires_at,revoked_at,max_uses,uses,job_id,customer_asset_id,deleted_at",
+      "id,organization_id,garment_id,provider,provider_model,quoted_credits,price_rule_id,expires_at,revoked_at,max_uses,uses,job_id,customer_asset_id,deleted_at",
     )
     .eq("token_hash", hash)
     .maybeSingle();

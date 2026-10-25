@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { admin, query, storage, responses } = vi.hoisted(() => {
+const { admin, query, storage, responses, requestDeletion } = vi.hoisted(() => {
   const query = {
     select: vi.fn(),
     eq: vi.fn(),
@@ -8,6 +8,7 @@ const { admin, query, storage, responses } = vi.hoisted(() => {
     single: vi.fn(),
     maybeSingle: vi.fn(),
     delete: vi.fn(),
+    update: vi.fn(),
     lt: vi.fn(),
     order: vi.fn(),
     limit: vi.fn(),
@@ -20,14 +21,16 @@ const { admin, query, storage, responses } = vi.hoisted(() => {
     storage,
     admin: { from: vi.fn(() => query), storage: { from: vi.fn(() => storage) } },
     responses,
+    requestDeletion: vi.fn(),
   };
 });
 vi.mock("@/lib/supabase/admin", () => ({ getAdminClient: () => admin }));
-import { cleanAbandonedUploads, signAsset } from "@/server/storage/media";
+vi.mock("@/server/ai/cleanup", () => ({ requestQwenPredictionDeletion: requestDeletion }));
+import { cleanAbandonedUploads, signAsset, deletePrivateAsset } from "@/server/storage/media";
 
 describe("private signing authorization boundary (storage test double)", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     query.select.mockReturnValue(query);
     query.eq.mockReturnValue(query);
     query.is.mockReturnValue(query);
@@ -35,6 +38,9 @@ describe("private signing authorization boundary (storage test double)", () => {
     query.order.mockReturnValue(query);
     query.limit.mockReturnValue(query);
     query.delete.mockReturnValue(query);
+    query.update.mockReturnValue(query);
+    requestDeletion.mockResolvedValue(null);
+    query.maybeSingle.mockResolvedValue({ data: null, error: null });
     responses.length = 0;
     query.then.mockImplementation((resolve: (value: { data: unknown; error: null }) => unknown) =>
       Promise.resolve(responses.shift() ?? { data: null, error: null }).then(resolve),
@@ -102,6 +108,71 @@ describe("private signing authorization boundary (storage test double)", () => {
       signAsset({ organizationId: "tenant-a", assetId: "unsettled-output" }),
     ).rejects.toThrow("not ready");
     expect(storage.createSignedUrl).not.toHaveBeenCalled();
+  });
+  it.each(["revoked", "expired", "withdrawn"])(
+    "refuses a succeeded customer result after permission is %s",
+    async (reason) => {
+      query.single
+        .mockResolvedValueOnce({
+          data: {
+            storage_path: "tenant-a/result/output.png",
+            generation_job_id: "done-job",
+          },
+          error: null,
+        })
+        .mockResolvedValueOnce({ data: { status: "succeeded", operation: "try_on" }, error: null });
+      query.maybeSingle
+        .mockResolvedValueOnce({
+          data: {
+            id: "session",
+            provider: "qwen",
+            revoked_at: reason === "revoked" ? new Date().toISOString() : null,
+            expires_at: new Date(Date.now() + (reason === "expired" ? -1000 : 60000)).toISOString(),
+          },
+          error: null,
+        })
+        .mockResolvedValueOnce({ data: null, error: null });
+      await expect(signAsset({ organizationId: "tenant-a", assetId: "result" })).rejects.toThrow(
+        /Customer/,
+      );
+      expect(storage.createSignedUrl).not.toHaveBeenCalled();
+    },
+  );
+  it("requires current consent for a customer source and permits only its short-lived signed URL", async () => {
+    query.single.mockResolvedValueOnce({
+      data: { storage_path: "tenant-a/source/original.png", kind: "customer_photo" },
+      error: null,
+    });
+    query.maybeSingle
+      .mockResolvedValueOnce({
+        data: {
+          id: "session",
+          provider: "qwen",
+          expires_at: new Date(Date.now() + 60000).toISOString(),
+        },
+        error: null,
+      })
+      .mockResolvedValueOnce({ data: { id: "consent" }, error: null });
+    await expect(signAsset({ organizationId: "tenant-a", assetId: "source" })).resolves.toContain(
+      "short-lived",
+    );
+    expect(query.eq).toHaveBeenCalledWith("version", "2026-10-25-qwen-v1");
+    expect(query.eq).toHaveBeenCalledWith("customer_asset_id", "source");
+  });
+  it("records durable GPU cleanup and removes local bytes without contacting the unavailable GPU", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("GPU offline"));
+    query.maybeSingle.mockResolvedValueOnce({
+      data: { storage_path: "tenant-a/result/original.png", generation_job_id: "done-job" },
+      error: null,
+    });
+    await expect(
+      deletePrivateAsset({ organizationId: "tenant-a", assetId: "result" }),
+    ).resolves.toBeUndefined();
+    expect(requestDeletion).toHaveBeenCalledWith({ organizationId: "tenant-a", jobId: "done-job" });
+    expect(storage.remove).toHaveBeenCalledWith(["tenant-a/result/original.png"]);
+    expect(query.update).toHaveBeenCalledWith({ deleted_at: expect.any(String) });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
   it("preserves a committed asset if a worker died before deleting its upload intent", async () => {
     responses.push({

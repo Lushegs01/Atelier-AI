@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Link2, ArrowUpRight, ShieldCheck, Sparkles, Shirt } from "lucide-react";
 import { Button, Dialog, Empty, Input, Notice, useToast } from "@/components/ui";
 import { useWorkspace, apiRequest } from "./context";
+import { providerDisclosure, type PublicProvider } from "./provider";
 export function PageHeading({
   title,
   description,
@@ -100,14 +101,21 @@ export function ProtectedEmpty({
     />
   );
 }
-export function AiDisclosure({ video = false }: { video?: boolean }) {
+export function AiDisclosure({
+  video = false,
+  provider,
+}: {
+  video?: boolean;
+  provider?: PublicProvider | null;
+}) {
+  const { data } = useWorkspace();
   return (
     <div className="notice text-[10px]">
       <ShieldCheck size={14} />
       <div>
         {video
           ? "Fashion video uses an Experimental model. Motion is illustrative and does not prove real fabric behaviour."
-          : "AI is a creative tool. Check every output against your original garment. Exact detail preservation and fit are not guaranteed."}
+          : `${providerDisclosure(provider === undefined ? data.provider : provider)} Check every output against your original garment before using it.`}
       </div>
     </div>
   );

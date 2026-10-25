@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { PublicProvider, WorkspaceCapability } from "./provider";
 
 export interface Garment {
   id: string;
@@ -43,6 +44,7 @@ export interface Job {
   error_message?: string;
   options?: Record<string, unknown>;
   provider_model?: string;
+  provider?: "qwen" | "fashn";
 }
 export interface Output {
   id: string;
@@ -51,6 +53,7 @@ export interface Output {
   url?: string;
   asset?: Asset;
   created_at?: string;
+  operation?: string;
 }
 export interface LedgerEntry {
   id: string;
@@ -113,6 +116,8 @@ export interface WorkspaceData {
   customers: Customer[];
   tryOnSessions: TryOnSession[];
   packages: Package[];
+  provider?: PublicProvider | null;
+  capabilities: WorkspaceCapability[];
   pagination?: { page: number; pageSize: number; hasMore: boolean };
 }
 const initial: WorkspaceData = {
@@ -127,6 +132,8 @@ const initial: WorkspaceData = {
   customers: [],
   tryOnSessions: [],
   packages: [],
+  provider: null,
+  capabilities: [],
 };
 const WorkspaceContext = createContext<{
   data: WorkspaceData;

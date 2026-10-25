@@ -5,7 +5,7 @@ Target: a locally verified release candidate. Live deployment, provider acceptan
 - [x] A: initialized Next.js / React / strict TypeScript, reusable design system and routes; local build/checks pass
 - [x] B: editorial public site, authentication forms, studio and responsive workspace; local browser smoke passes
 - [ ] C: implemented Supabase schema/policies/roles/private-media API; 47 SQL checks pass; hosted Supabase acceptance remains
-- [ ] D: implemented documented FASHN adapter and durable jobs; local orchestration tests pass; real provider/queue acceptance remains
+- [ ] D: implemented provider registry, default operator-hosted Qwen image-edit path, optional FASHN adapter and durable jobs; actual GPU/provider/managed-queue acceptance remains. See QWEN-VERIFICATION.md for current evidence; the initial FASHN report remains historical.
 - [ ] E: implemented transactional credits, signed quotes, Paystack verification/reconciliation; local tests pass; real test-account acceptance remains
 - [ ] F: local isolation/consent/token/file/payment tests pass; hosted storage/auth and independent-connection security tests remain
 - [ ] G: PWA shell and responsive Chromium checks pass; actual HTTPS device installation and broader accessibility review remain

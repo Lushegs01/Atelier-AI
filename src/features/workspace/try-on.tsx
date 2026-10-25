@@ -5,6 +5,7 @@ import { Badge, Button, Dialog, Empty, Input, Notice, Select, useToast } from "@
 import { PageHeading, SetupNotice } from "./common";
 import { useWorkspace, apiRequest } from "./context";
 import { dateLabel } from "@/lib/utils";
+import { operationAvailability, providerDisclosure } from "./provider";
 export default function TryOnPage() {
   const { data, refresh } = useWorkspace();
   const [open, setOpen] = useState(false);
@@ -14,6 +15,7 @@ export default function TryOnPage() {
   const [cost, setCost] = useState(0);
   const notify = useToast();
   const [now] = useState(() => Date.now());
+  const availability = operationAvailability("try_on", data.capabilities, data.provider);
   return (
     <>
       <PageHeading
@@ -21,6 +23,7 @@ export default function TryOnPage() {
         description="Invite a customer to see your piece in a private, consent-led experience."
         action={
           <Button
+            disabled={!availability.enabled}
             onClick={() => {
               setUrl("");
               setOpen(true);
@@ -32,6 +35,14 @@ export default function TryOnPage() {
         }
       />
       <SetupNotice />
+      <div className="mb-5">
+        <Notice tone={availability.enabled ? undefined : "warning"}>
+          {data.provider?.id === "qwen"
+            ? "Experimental Qwen image editing places a garment into a photograph. It is not a validated virtual fitting system and can alter the garment, body or likeness."
+            : "This experience provides a private AI visualization, not a verified fit."}
+          {!availability.enabled && ` ${availability.reason}`}
+        </Notice>
+      </div>
       <div className="dashboard-hero !min-h-60 mb-7 !grid-cols-1 md:!grid-cols-[1.5fr_1fr]">
         <div className="dashboard-hero-copy">
           <span className="eyebrow">
@@ -126,7 +137,11 @@ export default function TryOnPage() {
             description="Choose a garment from your library and create your first customer invitation. Each link is private, expires automatically and can be revoked."
             icon={<Link2 size={23} strokeWidth={1.3} />}
             action={
-              <Button variant="secondary" onClick={() => setOpen(true)}>
+              <Button
+                variant="secondary"
+                disabled={!availability.enabled}
+                onClick={() => setOpen(true)}
+              >
                 <Plus size={14} />
                 Create a customer invitation
               </Button>
@@ -137,8 +152,8 @@ export default function TryOnPage() {
       <div className="mt-6">
         <Notice>
           Virtual try-on is an AI visualization, not a guarantee of accurate fit, body measurements
-          or real-world appearance. Customers’ photographs are processed by FASHN only after
-          explicit consent.
+          or real-world appearance. {providerDisclosure(data.provider)} Explicit customer consent is
+          required before processing.
         </Notice>
       </div>
       <Dialog
@@ -223,7 +238,7 @@ export default function TryOnPage() {
               One customer, one generation. Consent is collected from the customer, never assumed.
               The original customer photo is retained for up to 24 hours by default.
             </Notice>
-            <Button type="submit" busy={busy}>
+            <Button type="submit" busy={busy} disabled={!availability.enabled}>
               Create private link <Link2 size={14} />
             </Button>
           </form>

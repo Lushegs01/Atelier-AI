@@ -8,7 +8,7 @@ import {
   videoOptionsSchema,
   tryOnOptionsSchema,
 } from "@/server/ai/contracts";
-import { getProviderCapabilities } from "@/server/ai/fashn";
+import { getProviderCapabilities } from "@/server/ai/registry";
 import { quoteGeneration, reserveGeneration } from "@/server/billing/service";
 import { dispatchGeneration } from "@/workers/client";
 import { assertDatabaseResult } from "./http";
@@ -76,12 +76,15 @@ export async function submitDesignerGeneration(raw: unknown, quoteOnly = false) 
     if (!garment) throw new ApiError(404, "This garment is unavailable.", "NOT_FOUND");
     let assets = tenant.client
       .from("assets")
-      .select("id,view,width,height")
+      .select("id,view,width,height,byte_size")
       .eq("organization_id", tenant.organizationId)
       .eq("garment_id", garment.id)
       .in("kind", ["original", "garment_original"])
       .in("view", [...capability.supportedViews])
+      .gte("width", capability.minInputDimension)
+      .gte("height", capability.minInputDimension)
       .is("deleted_at", null);
+    if (capability.provider === "qwen") assets = assets.lte("byte_size", 4 * 1024 * 1024);
     if (sourceId) assets = assets.eq("id", sourceId);
     const { data: source, error: assetError } = await assets
       .order("created_at")
@@ -92,6 +95,16 @@ export async function submitDesignerGeneration(raw: unknown, quoteOnly = false) 
       throw new ApiError(
         422,
         "Upload a front, mannequin, hanger, or flat-lay garment photograph.",
+        "SOURCE_INCOMPATIBLE",
+      );
+    if (
+      source.width < capability.minInputDimension ||
+      source.height < capability.minInputDimension ||
+      (capability.provider === "qwen" && source.byte_size > 4 * 1024 * 1024)
+    )
+      throw new ApiError(
+        422,
+        `Choose a source photograph at least ${capability.minInputDimension} pixels wide and high${capability.provider === "qwen" ? ", up to 4 MB" : ""}.`,
         "SOURCE_INCOMPATIBLE",
       );
     sourceId = source.id;
@@ -157,6 +170,8 @@ export async function submitDesignerGeneration(raw: unknown, quoteOnly = false) 
     garmentId: input.garmentId || null,
     sourceAssetId: sourceId || null,
     options,
+    provider: quote.provider,
+    providerModel: quote.providerModel,
   };
   if (quoteOnly)
     return {
@@ -167,6 +182,8 @@ export async function submitDesignerGeneration(raw: unknown, quoteOnly = false) 
         sufficient: quote.sufficient,
         operation: quote.operation,
         lifecycle: quote.lifecycle,
+        provider: quote.provider,
+        providerModel: quote.providerModel,
       },
       quoteToken: createQuoteToken(quoteContext, quote),
       capabilities: getProviderCapabilities(),
@@ -185,6 +202,7 @@ export async function submitDesignerGeneration(raw: unknown, quoteOnly = false) 
     idempotencyKey: input.idempotencyKey,
     expectedCredits: confirmed.credits,
     expectedPriceRuleId: confirmed.priceRuleId,
+    provider: confirmed.provider,
   });
   // The transactional outbox remains authoritative if event dispatch is unavailable.
   await dispatchGeneration(job.id, tenant.organizationId).catch(() => undefined);

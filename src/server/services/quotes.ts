@@ -8,6 +8,8 @@ const schema = z
     organizationId: z.string().uuid(),
     actorId: z.string().uuid(),
     operation: z.enum(["photo", "video", "try_on"]),
+    provider: z.enum(["qwen", "fashn"]),
+    providerModel: z.string().min(1).max(160),
     garmentId: z.string().uuid().nullable(),
     sourceAssetId: z.string().uuid().nullable(),
     optionsHash: z.string().length(64),
@@ -19,7 +21,13 @@ const schema = z
 type QuotePayload = z.infer<typeof schema>;
 export type QuoteContext = Pick<
   QuotePayload,
-  "organizationId" | "actorId" | "operation" | "garmentId" | "sourceAssetId"
+  | "organizationId"
+  | "actorId"
+  | "operation"
+  | "garmentId"
+  | "sourceAssetId"
+  | "provider"
+  | "providerModel"
 > & { options: Record<string, unknown> };
 
 function optionsHash(options: Record<string, unknown>) {

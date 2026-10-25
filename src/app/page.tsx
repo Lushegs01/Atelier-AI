@@ -30,8 +30,8 @@ export default function Home() {
               <em>perspective.</em>
             </h1>
             <p className="hero-description">
-              Turn the garments you make into the campaigns you imagine. Model photography, fashion
-              films and personal try-on, in one thoughtful workspace.
+              Turn the garments you make into the campaigns you imagine. Model photography and
+              personal image visualization, in one thoughtful workspace.
             </p>
             <div className="button-row">
               <Button href="/signup">
@@ -89,8 +89,8 @@ export default function Home() {
             },
             {
               icon: Film,
-              title: "Bring your collection to life",
-              text: "Turn an approved photograph into a short fashion film.",
+              title: "Build your campaign",
+              text: "Review and organize your photographs. Video needs a separately configured provider.",
             },
             {
               icon: ScanFace,

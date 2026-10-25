@@ -17,6 +17,7 @@ import { PageHeading, Onboarding, SetupNotice } from "./common";
 import { useWorkspace } from "./context";
 import { editorialImages } from "@/lib/editorial";
 import { dateLabel } from "@/lib/utils";
+import { operationAvailability } from "./provider";
 export default function Dashboard() {
   const { data, loading } = useWorkspace();
   const first = data.user?.fullName?.split(" ")[0];
@@ -72,8 +73,13 @@ export default function Dashboard() {
           {
             href: "/app/videos",
             icon: Film,
-            title: "Make a fashion film",
-            description: "Give your imagery a little motion.",
+            title: operationAvailability("video", data.capabilities, data.provider).enabled
+              ? "Make a fashion film"
+              : "Fashion film availability",
+            description:
+              data.provider?.id === "qwen"
+                ? "Qwen creates still images. Review existing films."
+                : "Review your studio’s video options.",
           },
           {
             href: "/app/try-on",

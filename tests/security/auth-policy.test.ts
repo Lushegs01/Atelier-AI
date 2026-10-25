@@ -103,6 +103,8 @@ describe("signed generation price confirmations (unit)", () => {
     organizationId: "10000000-0000-4000-8000-000000000001",
     actorId: "20000000-0000-4000-8000-000000000001",
     operation: "photo",
+    provider: "qwen",
+    providerModel: "Qwen/Qwen-Image-Edit-2511",
     garmentId: "30000000-0000-4000-8000-000000000001",
     sourceAssetId: "40000000-0000-4000-8000-000000000001",
     options: { scene: "Studio", resolution: "1k" },
@@ -129,6 +131,9 @@ describe("signed generation price confirmations (unit)", () => {
     expect(() => verifyQuoteToken(token, { ...context, sourceAssetId: null })).toThrow(
       /settings changed/,
     );
+    expect(() =>
+      verifyQuoteToken(token, { ...context, provider: "fashn", providerModel: "product-to-model" }),
+    ).toThrow(/settings changed/);
     expect(() =>
       verifyQuoteToken(token, { ...context, options: { ...context.options, scene: "Outdoor" } }),
     ).toThrow(/settings changed/);

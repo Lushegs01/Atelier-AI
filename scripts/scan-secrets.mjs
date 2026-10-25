@@ -39,7 +39,7 @@ const rules = [
   ["AWS access key", /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g],
   [
     "literal server credential",
-    /\b(?:FASHN_API_KEY|PAYSTACK_SECRET_KEY|SUPABASE_SERVICE_ROLE_KEY|INNGEST_SIGNING_KEY|CRON_SECRET)\s*[:=]\s*["']([^"'\r\n]{16,})["']/g,
+    /\b(?:FASHN_API_KEY|QWEN_API_KEY|PAYSTACK_SECRET_KEY|SUPABASE_SERVICE_ROLE_KEY|INNGEST_SIGNING_KEY|CRON_SECRET)\s*[:=]\s*["']([^"'\r\n]{16,})["']/g,
   ],
 ];
 for (const path of paths) {

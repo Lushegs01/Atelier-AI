@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -14,6 +14,7 @@ import { Logo } from "@/components/logo";
 import { Badge, Button, Dialog, FileUpload, Notice, Empty, useToast } from "@/components/ui";
 import { apiRequest } from "@/features/workspace/context";
 import { downloadMedia } from "@/features/workspace/gallery";
+import { providerDisclosure, type PublicProvider } from "@/features/workspace/provider";
 type SessionData = {
   session: { id: string; expiresAt: string; completed: boolean };
   brand: { name: string; color?: string };
@@ -22,6 +23,8 @@ type SessionData = {
   outputs: { id: string; url: string }[];
   consentVersion: string;
   available: boolean;
+  provider?: PublicProvider;
+  retentionHours?: number;
 };
 export default function GuestTryOn({ token }: { token: string }) {
   const [data, setData] = useState<SessionData | null>(null);
@@ -34,6 +37,8 @@ export default function GuestTryOn({ token }: { token: string }) {
   const [deleted, setDeleted] = useState(false);
   const [deletion, setDeletion] = useState(false);
   const notify = useToast();
+  const reviewedDisclosure = useRef("");
+  const disclosedProvider = Boolean(data?.provider?.id && data?.provider?.disclosure);
   useEffect(() => {
     let active = true;
     async function load() {
@@ -42,6 +47,19 @@ export default function GuestTryOn({ token }: { token: string }) {
         const next = await res.json();
         if (!res.ok) throw new Error(next.error);
         if (active) {
+          const disclosure = JSON.stringify([
+            next.provider?.id,
+            next.provider?.disclosure,
+            next.consentVersion,
+            next.retentionHours,
+          ]);
+          if (reviewedDisclosure.current && reviewedDisclosure.current !== disclosure) {
+            setConsent(false);
+            setFile(null);
+            setPreview("");
+            setReview(false);
+          }
+          reviewedDisclosure.current = disclosure;
           setData(next);
           setError("");
         }
@@ -68,7 +86,7 @@ export default function GuestTryOn({ token }: { token: string }) {
     setPreview(URL.createObjectURL(nextFile));
   }
   async function submit() {
-    if (!file || !consent || !data) return;
+    if (!file || !consent || !data || !disclosedProvider || !data.available) return;
     setBusy(true);
     const form = new FormData();
     form.set("file", file);
@@ -222,15 +240,19 @@ export default function GuestTryOn({ token }: { token: string }) {
               </p>
               <div className="mb-5">
                 <Notice>
-                  Your photograph will be sent to FASHN for an AI fashion visualization. It is not a
-                  guarantee of fit or accurate body measurements. The source photo is retained for
-                  up to 24 hours by default. Your result stays private within this session.
+                  {providerDisclosure(data.provider)}{" "}
+                  {data.retentionHours
+                    ? `This studio retains your source photo for up to ${data.retentionHours} hours.`
+                    : "Your source photo follows the studio’s disclosed retention period (24 hours by default)."}{" "}
+                  Your result stays private within this session. It does not establish garment fit
+                  or accurate body measurements.
                 </Notice>
               </div>
               <label className="check-label mb-5">
                 <input
                   type="checkbox"
                   checked={consent}
+                  disabled={!disclosedProvider || !data.available}
                   onChange={(e) => setConsent(e.target.checked)}
                 />
                 <span>
@@ -242,7 +264,7 @@ export default function GuestTryOn({ token }: { token: string }) {
                   . This does not give promotional permission.
                 </span>
               </label>
-              {consent ? (
+              {consent && disclosedProvider ? (
                 <FileUpload onFile={chooseFile} preview={preview} label="Choose your photograph" />
               ) : (
                 <div className="upload-zone !cursor-default">
@@ -252,15 +274,17 @@ export default function GuestTryOn({ token }: { token: string }) {
                 </div>
               )}
               <Button
-                disabled={!consent || !file || !data.available}
+                disabled={!consent || !file || !data.available || !disclosedProvider}
                 className="w-full mt-5"
                 onClick={() => setReview(true)}
               >
                 Review my photograph <ArrowRight size={15} />
               </Button>
-              {!data.available && (
+              {(!data.available || !disclosedProvider) && (
                 <p className="muted text-xs mt-3">
-                  This studio’s try-on service is not enabled. Please contact your designer.
+                  {!disclosedProvider
+                    ? "The processing provider has not been disclosed for this invitation. Please contact your designer before uploading."
+                    : "This studio’s try-on service is not enabled. Please contact your designer."}
                 </p>
               )}
             </section>
@@ -294,7 +318,7 @@ export default function GuestTryOn({ token }: { token: string }) {
         )}
         <Notice>
           Your designer pays for this generation. Your permission applies only to this private
-          try-on.
+          try-on. {providerDisclosure(data?.provider)}
         </Notice>
         <Button className="w-full mt-5" busy={busy} onClick={submit}>
           <ShieldCheck size={15} />I agree — start my private try-on

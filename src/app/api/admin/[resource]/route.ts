@@ -3,7 +3,7 @@ import { getAdminClient } from "@/lib/supabase/admin";
 import { requirePlatformAdmin, consumeRateLimit } from "@/server/auth/context";
 import { ApiError } from "@/server/auth/security";
 import { assertDatabaseResult, readJson, route } from "@/server/services/http";
-import { getProviderCapabilities } from "@/server/ai/fashn";
+import { getProviderCapabilities } from "@/server/ai/registry";
 import {
   reconcilePendingPayments,
   requestPaymentRefund,
@@ -92,7 +92,7 @@ export async function GET(request: Request, context: Context) {
       jobs: {
         table: "generation_jobs",
         columns:
-          "id,organization_id,operation,status,provider_model,provider_reference,retry_count,error_code,created_at,started_at,completed_at",
+          "id,organization_id,provider,operation,status,provider_model,provider_reference,retry_count,error_code,created_at,started_at,completed_at",
       },
       payments: {
         table: "payment_transactions",
@@ -212,6 +212,25 @@ export async function POST(request: Request, context: Context) {
               .optional(),
           })
           .parse(body);
+        if (input.enabled) {
+          const { data: current, error: currentError } = await admin
+            .from("generation_price_rules")
+            .select("provider,estimated_provider_cost_microusd")
+            .eq("id", input.id)
+            .maybeSingle();
+          assertDatabaseResult(currentError);
+          if (!current) throw new ApiError(404, "This pricing rule was not found.", "NOT_FOUND");
+          const cost =
+            input.estimatedProviderCostMicrousd === undefined
+              ? current.estimated_provider_cost_microusd
+              : input.estimatedProviderCostMicrousd;
+          if (current.provider === "qwen" && cost === null)
+            throw new ApiError(
+              422,
+              "Measure and enter the GPU cost before enabling Qwen pricing.",
+              "PROVIDER_COST_UNREVIEWED",
+            );
+        }
         const { data, error } = await admin
           .from("generation_price_rules")
           .update({

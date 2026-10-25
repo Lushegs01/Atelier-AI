@@ -1,5 +1,6 @@
 import { getAdminClient, hasSupabaseConfig } from "@/lib/supabase/admin";
 import { route, assertDatabaseResult } from "@/server/services/http";
+import { getActiveProviderId } from "@/server/ai/registry";
 
 export async function GET(request: Request) {
   return route(request, async () => {
@@ -8,6 +9,7 @@ export async function GET(request: Request) {
         configured: false,
         packages: [],
         rules: [],
+        provider: getActiveProviderId(),
         message: "Credit packages and generation prices will be available after pricing review.",
       };
     const admin = getAdminClient();
@@ -19,13 +21,15 @@ export async function GET(request: Request) {
         .order("sort_order"),
       admin
         .from("generation_price_rules")
-        .select("id,operation,option_key,credits,enabled,reviewed_at")
+        .select("id,provider,operation,option_key,credits,enabled,reviewed_at")
+        .eq("provider", getActiveProviderId())
         .order("operation")
         .order("credits"),
     ]);
     assertDatabaseResult(packages.error || rules.error);
     return {
       configured: true,
+      provider: getActiveProviderId(),
       packages: packages.data || [],
       rules: (rules.data || []).map((rule) => ({
         id: rule.id,

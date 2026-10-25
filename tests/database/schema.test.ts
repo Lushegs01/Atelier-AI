@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -32,10 +32,21 @@ async function reserve(
     source?: string | null;
     session?: string | null;
     garment?: string;
+    provider?: "qwen" | "fashn";
   } = {},
 ) {
-  const result = await db.query<{ job: { id: string; status: string; estimated_credits: number } }>(
-    "select to_jsonb(public.reserve_generation($1,$2,$3,$4,$5,$6::uuid[],$7::jsonb,$8,'default',$9)) as job",
+  const result = await db.query<{
+    job: {
+      id: string;
+      status: string;
+      estimated_credits: number;
+      provider: string;
+      provider_model: string;
+      provider_credits_milli: number;
+      provider_cost_microusd: number;
+    };
+  }>(
+    "select to_jsonb(public.reserve_generation($10,$1,$2,$3,$4,$5,$6::uuid[],$7::jsonb,$8,'default',$9)) as job",
     [
       ids.orgA,
       overrides.actor === undefined ? ids.ownerA : overrides.actor,
@@ -43,9 +54,12 @@ async function reserve(
       overrides.garment ?? ids.garmentA,
       overrides.source === undefined ? ids.assetA : overrides.source,
       [ids.assetA],
-      {},
+      overrides.provider === "qwen"
+        ? { resolution: "1k", quality: "balanced", outputFormat: "png", numImages: 1 }
+        : {},
       overrides.key ?? "test-reservation-001",
       overrides.session ?? null,
+      overrides.provider ?? "fashn",
     ],
   );
   return result.rows[0].job;
@@ -68,7 +82,10 @@ beforeAll(async () => {
     grant usage on schema auth to anon,authenticated,service_role; grant execute on function auth.uid() to anon,authenticated,service_role;
     create schema storage; create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
   `);
-  await db.exec(readFileSync(resolve("supabase/migrations/202610240001_initial.sql"), "utf8"));
+  for (const migration of readdirSync(resolve("supabase/migrations"))
+    .filter((file) => file.endsWith(".sql"))
+    .sort())
+    await db.exec(readFileSync(resolve("supabase/migrations", migration), "utf8"));
   await db.exec(readFileSync(resolve("supabase/seed.sql"), "utf8"));
   for (const [label, value] of Object.entries(ids).filter(([key]) =>
     ["ownerA", "ownerB", "designer", "assistant", "admin", "stranger"].includes(key),
@@ -125,7 +142,7 @@ beforeAll(async () => {
     );
   }
   await db.exec(
-    "update generation_price_rules set enabled=true,reviewed_at=now(); update credit_packages set enabled=true;",
+    "update generation_price_rules set enabled=true,reviewed_at=now() where provider='fashn'; update credit_packages set enabled=true;",
   );
 }, 60000);
 beforeEach(async () => {
@@ -269,7 +286,7 @@ describe("atomic accounting and durable jobs", () => {
   it("refuses cross-tenant input arrays and rolls back all accounting", async () => {
     await expect(
       db.query(
-        "select reserve_generation($1,$2,'photo',$3,$4,$5::uuid[],'{}','bad-tenant-input','default',null)",
+        "select reserve_generation('fashn',$1,$2,'photo',$3,$4,$5::uuid[],'{}','bad-tenant-input','default',null)",
         [ids.orgA, ids.ownerA, ids.garmentA, ids.assetA, [ids.assetB]],
       ),
     ).rejects.toThrow(/forbidden/i);
@@ -343,7 +360,7 @@ describe("atomic accounting and durable jobs", () => {
   it("rejects a changed confirmed price before creating a reservation", async () => {
     await expect(
       db.query(
-        "select reserve_generation($1,$2,'photo',$3,$4,$5::uuid[],'{}','changed-price-request','default',null,1,null)",
+        "select reserve_generation('fashn',$1,$2,'photo',$3,$4,$5::uuid[],'{}','changed-price-request','default',null,1,null)",
         [ids.orgA, ids.ownerA, ids.garmentA, ids.assetA, [ids.assetA]],
       ),
     ).rejects.toThrow(/quote changed/i);
@@ -399,7 +416,7 @@ describe("atomic accounting and durable jobs", () => {
     const jobs: string[] = [];
     for (const organizationId of orgs) {
       const inserted = await db.query<{ id: string }>(
-        "insert into generation_jobs(organization_id,operation,estimated_credits,price_rule_id,provider_model,idempotency_key) select $1,'photo',credits,id,provider_model,'provider-global-slot' from generation_price_rules where operation='photo' and option_key='default' returning id",
+        "insert into generation_jobs(organization_id,operation,estimated_credits,price_rule_id,provider_model,idempotency_key) select $1,'photo',credits,id,provider_model,'provider-global-slot' from generation_price_rules where provider='fashn' and operation='photo' and option_key='default' returning id",
         [organizationId],
       );
       jobs.push(inserted.rows[0].id);
@@ -498,6 +515,188 @@ describe("trusted registered-account membership management", () => {
   });
 });
 
+describe("provider-aware prices, immutable jobs and guest permissions", () => {
+  const enableQwen = () =>
+    db.exec(
+      "update generation_price_rules set enabled=true,reviewed_at=now(),estimated_provider_cost_microusd=123456,credits=17 where provider='qwen'",
+    );
+  it("seeds Qwen disabled with unknown GPU cost and no FASHN credit conversion", async () => {
+    const rules = await db.query<{
+      enabled: boolean;
+      provider_credits_milli: number;
+      estimated_provider_cost_microusd: null;
+    }>(
+      "select enabled,provider_credits_milli,estimated_provider_cost_microusd from generation_price_rules where provider='qwen'",
+    );
+    expect(rules.rows).toHaveLength(2);
+    expect(
+      rules.rows.every(
+        (rule) =>
+          !rule.enabled &&
+          rule.provider_credits_milli === 0 &&
+          rule.estimated_provider_cost_microusd === null,
+      ),
+    ).toBe(true);
+  });
+  it("reserves the reviewed Qwen retail charge independently of FASHN prices", async () => {
+    await enableQwen();
+    const job = await reserve({ provider: "qwen" });
+    expect(job.provider).toBe("qwen");
+    expect(job.provider_model).toBe("Qwen/Qwen-Image-Edit-2511");
+    expect(job.estimated_credits).toBe(17);
+    expect(job.provider_credits_milli).toBe(0);
+    expect(job.provider_cost_microusd).toBe(123456);
+    expect(await account()).toEqual({ available: 83, reserved: 17 });
+  });
+  it("does not fall back to enabled FASHN rules when Qwen pricing is disabled", async () => {
+    await expect(reserve({ provider: "qwen" })).rejects.toThrow(/pricing not enabled/i);
+  });
+  it("requires a measured cost before a Qwen rule can be enabled", async () => {
+    await expect(
+      db.exec(
+        "update generation_price_rules set enabled=true,reviewed_at=now() where provider='qwen'",
+      ),
+    ).rejects.toThrow(/qwen_cost_review/i);
+  });
+  it("retains durable GPU deletion work after the local result has been removed", async () => {
+    await enableQwen();
+    const job = await reserve({ provider: "qwen" });
+    const outputId = "40000000-0000-4000-8000-000000000004";
+    await db.query(
+      "insert into assets(id,organization_id,generation_job_id,kind,storage_path,mime_type,byte_size,deleted_at) values($1,$2,$3,'generated_image',$4,'image/png',100,now())",
+      [outputId, ids.orgA, job.id, `${ids.orgA}/deleted-output.png`],
+    );
+    await db.query("update generation_jobs set inference_delete_requested_at=now() where id=$1", [
+      job.id,
+    ]);
+    const pending = () =>
+      db.query(
+        "select id from generation_jobs where inference_delete_requested_at is not null and inference_delete_completed_at is null",
+      );
+    expect((await pending()).rows).toEqual([{ id: job.id }]);
+    await db.query("update generation_jobs set inference_delete_completed_at=now() where id=$1", [
+      job.id,
+    ]);
+    expect((await pending()).rows).toHaveLength(0);
+  });
+  it("requires a durable request before GPU deletion can be completed", async () => {
+    await enableQwen();
+    const job = await reserve({ provider: "qwen" });
+    await expect(
+      db.query("update generation_jobs set inference_delete_completed_at=now() where id=$1", [
+        job.id,
+      ]),
+    ).rejects.toThrow(/inference_deletion_order/i);
+  });
+  it("does not allow a completed GPU deletion request to be forgotten or reset", async () => {
+    await enableQwen();
+    const job = await reserve({ provider: "qwen" });
+    await db.query(
+      "update generation_jobs set inference_delete_requested_at=now(),inference_delete_completed_at=now() where id=$1",
+      [job.id],
+    );
+    await expect(
+      db.query(
+        "update generation_jobs set inference_delete_requested_at=null,inference_delete_completed_at=null where id=$1",
+        [job.id],
+      ),
+    ).rejects.toThrow(/cannot be changed once recorded/i);
+  });
+  it("does not accept a FASHN quote rule for a Qwen reservation", async () => {
+    await enableQwen();
+    const rule = (
+      await db.query<{ id: string }>(
+        "select id from generation_price_rules where provider='fashn' and operation='photo'",
+      )
+    ).rows[0];
+    await expect(
+      db.query(
+        "select reserve_generation('qwen',$1,$2,'photo',$3,$4,$5::uuid[],$6::jsonb,'qwen-stale-price','default',null,17,$7)",
+        [
+          ids.orgA,
+          ids.ownerA,
+          ids.garmentA,
+          ids.assetA,
+          [ids.assetA],
+          { resolution: "1k", quality: "balanced", outputFormat: "png", numImages: 1 },
+          rule.id,
+        ],
+      ),
+    ).rejects.toThrow(/quote changed/i);
+  });
+  it("rejects idempotency-key reuse across providers", async () => {
+    await enableQwen();
+    await reserve();
+    await expect(reserve({ provider: "qwen" })).rejects.toThrow(/Idempotency key reused/i);
+  });
+  it("prevents changing the persisted provider and model of an existing job", async () => {
+    const job = await reserve();
+    await expect(
+      db.query(
+        "update generation_jobs set provider='qwen',provider_model='Qwen/Qwen-Image-Edit-2511' where id=$1",
+        [job.id],
+      ),
+    ).rejects.toThrow(/cannot be changed/i);
+  });
+  it("rejects Qwen video before consuming any credits", async () => {
+    await expect(reserve({ provider: "qwen", operation: "video" })).rejects.toThrow(
+      /capability unavailable/i,
+    );
+  });
+  it("keeps independent durable provider slots and limits Qwen to one in-flight job", async () => {
+    await enableQwen();
+    const legacy = await reserve({ key: "pinned-fashn-job" });
+    expect((await db.query("select * from claim_generation($1)", [legacy.id])).rows).toHaveLength(
+      1,
+    );
+    const qwen = await reserve({ provider: "qwen", key: "pinned-qwen-job" });
+    expect((await db.query("select * from claim_generation($1)", [qwen.id])).rows).toHaveLength(1);
+    const inserted = await db.query<{ id: string }>(
+      "insert into generation_jobs(organization_id,provider,operation,estimated_credits,price_rule_id,provider_model,idempotency_key) select $1,'qwen','photo',credits,id,provider_model,'qwen-second-workspace' from generation_price_rules where provider='qwen' and operation='photo' returning id",
+      [ids.orgB],
+    );
+    expect(
+      (await db.query("select * from claim_generation($1)", [inserted.rows[0].id])).rows,
+    ).toHaveLength(0);
+  });
+  it("rejects a customer invitation when its pinned provider is changed at submission", async () => {
+    await enableQwen();
+    await db.query(
+      "insert into try_on_sessions(id,organization_id,garment_id,token_hash,expires_at) values($1,$2,$3,$4,now()+interval '1 day')",
+      [ids.session, ids.orgA, ids.garmentA, "b".repeat(64)],
+    );
+    await expect(
+      reserve({
+        provider: "qwen",
+        actor: null,
+        operation: "try_on",
+        source: ids.customerPhoto,
+        session: ids.session,
+      }),
+    ).rejects.toThrow(/provider changed/i);
+  });
+  it("requires the current Qwen processing consent instead of an old provider disclosure", async () => {
+    await enableQwen();
+    await db.query(
+      "insert into try_on_sessions(id,organization_id,garment_id,provider,provider_model,token_hash,expires_at) values($1,$2,$3,'qwen','Qwen/Qwen-Image-Edit-2511',$4,now()+interval '1 day')",
+      [ids.session, ids.orgA, ids.garmentA, "c".repeat(64)],
+    );
+    await db.query(
+      "insert into consents(organization_id,try_on_session_id,version) values($1,$2,'2026-10-24-v1')",
+      [ids.orgA, ids.session],
+    );
+    await expect(
+      reserve({
+        provider: "qwen",
+        actor: null,
+        operation: "try_on",
+        source: ids.customerPhoto,
+        session: ids.session,
+      }),
+    ).rejects.toThrow(/consent required/i);
+  });
+});
+
 describe("guest sessions and consent", () => {
   beforeEach(async () => {
     await db.query(
@@ -505,7 +704,7 @@ describe("guest sessions and consent", () => {
       [ids.session, ids.orgA, ids.garmentA, "a".repeat(64)],
     );
     await db.query(
-      "insert into consents(organization_id,try_on_session_id,version) values($1,$2,'2026-10-24')",
+      "insert into consents(organization_id,try_on_session_id,version) values($1,$2,'2026-10-24-v1')",
       [ids.orgA, ids.session],
     );
   });

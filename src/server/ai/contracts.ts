@@ -47,24 +47,43 @@ export interface Prediction {
 }
 
 export interface ProviderCapability {
+  provider?: "fashn" | "qwen";
   operation: GenerationOperation;
   model: string;
   lifecycle: "Preview" | "Experimental";
   enabled: boolean;
   minInputDimension: number;
   supportedViews: readonly string[];
+  reason?: string;
+  notes?: string;
+}
+
+export interface GenerationContext {
+  /** Stable application job UUID; self-hosted services use this to deduplicate submissions. */
+  requestId: string;
 }
 
 export interface FashionProvider {
-  generateFashionImage(source: string, options: ImageOptions): Promise<{ id: string }>;
-  generateFashionVideo(source: string, options: VideoOptions): Promise<{ id: string }>;
+  generateFashionImage(
+    source: string,
+    options: ImageOptions,
+    context?: GenerationContext,
+  ): Promise<{ id: string }>;
+  generateFashionVideo(
+    source: string,
+    options: VideoOptions,
+    context?: GenerationContext,
+  ): Promise<{ id: string }>;
   generateVirtualTryOn(
     product: string,
     person: string,
     options: TryOnOptions,
+    context?: GenerationContext,
   ): Promise<{ id: string }>;
   getGenerationStatus(id: string): Promise<Prediction>;
   getProviderCapabilities(): ProviderCapability[];
+  /** Available only for operator-controlled services that can purge retained inputs/results. */
+  deleteGeneration?(id: string): Promise<void>;
 }
 
 export class ProviderError extends Error {

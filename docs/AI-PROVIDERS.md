@@ -1,61 +1,82 @@
-# AI provider and durable execution
+# AI providers and durable execution
 
-Implementation reviewed against official documentation on 24 October 2026. **No FASHN account, paid prediction or managed Inngest run has been verified in this environment.** Contract tests use HTTP test doubles. These tests establish request and failure handling behavior, not visual fidelity or provider acceptance.
+The default backend is operator-hosted `Qwen/Qwen-Image-Edit-2511`. FASHN remains optional and is never an automatic fallback. Web adapter and Python contract tests are not proof of successful GPU inference. No real Qwen output, GPU deployment or paid FASHN prediction has been verified here. See the current [Qwen report](QWEN-VERIFICATION.md) and preserved [initial report](VERIFICATION.md).
 
-## Capabilities and controls
+## Capabilities
 
-| Operation              | FASHN model        | Documented lifecycle | Release controls                                        |
-| ---------------------- | ------------------ | -------------------- | ------------------------------------------------------- |
-| Fashion photographs    | `product-to-model` | Preview              | `ENABLE_PHOTO_GENERATION=true` after staging acceptance |
-| Customer visualization | `tryon-max`        | Preview              | `ENABLE_TRY_ON=true` after consent/privacy acceptance   |
-| Fashion video          | `image-to-video`   | Experimental         | `ENABLE_VIDEO_GENERATION=true` after video acceptance   |
+| Backend                   | Photographs                               | Customer visualization                                                             | Video                                   |
+| ------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------- |
+| Qwen Image Edit (default) | Experimental garment-guided image editing | Separately enabled experimental multi-image editing, not a validated fitting model | Unsupported regardless of feature flags |
+| FASHN (optional)          | `product-to-model`, Preview               | `tryon-max`, Preview                                                               | `image-to-video`, Experimental          |
 
-All flags default false. A flag and `FASHN_API_KEY` are required. Enable each independently. These lifecycle labels mean the business must tolerate provider changes and possible withdrawal; they are not availability guarantees.
+All flags default false. A backend, its operation flag and its reviewed provider-specific price rule must be enabled before spending credits. New work follows `AI_PROVIDER=qwen|fashn`; existing jobs and invitations preserve their selected provider/model. Missing Qwen credentials never route a photograph to FASHN. The UI identifies the actual pinned provider before customer consent.
 
-The internal `FashionProvider` contract separates the application from FASHN's envelope. The adapter uses fixed `https://api.fashn.ai/v1/run` and `/v1/status/{predictionId}` endpoints, Bearer authentication, nested `inputs`, and the documented prediction states. Browser clients never call FASHN directly.
+Qwen is a general image editor, not a specialized garment-fitting system with demonstrated parity. It may alter construction, print, embellishment, body, pose or likeness. Compare every output with the original. Customer photographs cannot be used for campaign animation or unrelated reuse. No claim of accurate fit, exact identity preservation or measured fidelity is made.
 
-The initial priced image workflows accept **one image at balanced quality and 1k resolution**. Photo controls describe an adult model, pose, scene, aspect ratio, image format and seed. They cannot add face-reference inputs, increase output count, change image quality or resolution through an unpriced option. Garment front, mannequin, hanger and flat-lay source views are accepted; detail-only, back and side views are not treated as interchangeable full-garment inputs. Video accepts 5 or 10 seconds and 480p, 720p or 1080p. Its source must be at least 301 pixels in both dimensions. Motion text is optional and bounded; camera behavior, physical accuracy and garment preservation are not guaranteed.
+The [official model card](https://huggingface.co/Qwen/Qwen-Image-Edit-2511) publishes Apache-2.0 weights and multi-image editing through `QwenImageEditPlusPipeline`. That license does not include GPU compute, hosting, storage or model-quality guarantees. Review model/dependency licenses, input rights and infrastructure terms for release.
 
-## Pricing boundary
+## Provision Qwen
 
-FASHN credits and Atelier customer credits are distinct units. For the fixed balanced/1k image configuration the documented provider cost is two FASHN credits per output. Five-second video costs one, three or six provider credits at 480p, 720p or 1080p; ten seconds doubles those values. The adapter's estimator expresses provider billing units. Monetary provider cost depends on the purchased provider plan and foreign-exchange assumptions and must be reviewed in the pricing table before enabling a rule. `provider_credits_milli` records integer thousandths; `provider_cost_microusd` is an integer cost estimate. Actual `x-fashn-credits-used` status headers replace the credit estimate when present. Missing headers are not treated as zero consumption.
+The authenticated Python inference service is in `inference/qwen/`. Its [README](../inference/qwen/README.md) contains exact dependencies, model revision, environment, CUDA/Docker startup and CPU test commands. A compatible CUDA GPU runtime is required. This PC has Intel Iris Xe and has not performed model inference. Memory, offload, cold start, throughput and safe concurrency must be measured on the chosen host; no hardware sizing benchmark is claimed.
+
+Set these web-app server values:
+
+```dotenv
+AI_PROVIDER=qwen
+QWEN_API_URL=https://YOUR_PRIVATE_GPU_HOST
+QWEN_API_KEY=
+QWEN_ALLOW_INSECURE_LOCAL=false
+ENABLE_PHOTO_GENERATION=false
+ENABLE_TRY_ON=false
+ENABLE_VIDEO_GENERATION=false
+```
+
+Generate a random shared token of at least32 characters and inject the same value into the GPU service. This is your service secret, not a purchased vendor API account. Never commit it. The endpoint stays server-only; browsers cannot select arbitrary inference hosts. Production requires HTTPS. The explicit insecure-local exception permits development localhost only.
+
+The GPU service needs separate private persistent job/output storage, a bounded queue, a stable model revision and exclusive inference-worker ownership. Its `QWEN_PUBLIC_URL` must match the reachable configured endpoint; `QWEN_DATA_DIR`, retention, queue and offload values belong to that service, not Vercel. Protect its logs, disks, caches, snapshots and access as customer-data systems.
+
+1. Choose an operator-controlled compatible GPU machine/host. No hardware purchase, hosting account or deployment has been made here.
+2. Build/run the service using its README, private durable volumes and a secret manager.
+3. Expose authenticated HTTPS to the Next.js worker and verify authenticated readiness. Health is not an image-generation test.
+4. Configure the endpoint/shared token on Next.js and apply the provider-aware migration before new work.
+5. Run authorized synthetic garment images through actual GPU editing, restart/replay, private output transfer and deletion.
+6. Measure processing cost, review/enable the Qwen photo price rule, then enable photographs. Keep customer visualization disabled until its separate privacy/fidelity assessment passes. Video stays unavailable for Qwen.
+
+## Costs and settings
+
+Atelier credits are commercial prepaid units. Qwen does not consume FASHN billing credits; this does not mean zero infrastructure cost. Measure GPU processing and idle capacity, storage/network, failed work, payment fees and margin. Record cost estimates in integer monetary units and keep unknown costs unknown. Do not advertise free hosted inference or automatically grant free credits.
+
+The initial image workflow requests one image with a roughly1K target. Qwen applies its own image-edit pipeline; optional FASHN uses the documented balanced1k envelope. Settings and pricing variants are server-owned, so a client cannot increase output count or choose unpriced expensive modes. Accepted full-garment views are front, mannequin, hanger and flat-lay. Back/side/detail views remain library references.
+
+For optional FASHN, documented balanced1k image output uses two provider credits. Its5sec video uses1/3/6 provider credits at480p/720p/1080p, doubled at10sec. Account discounts and FX require a current cost review before enabling rules. A provider change never rewrites historical costs or ledger entries.
 
 ## Durable lifecycle
 
-1. The authenticated service validates membership, compatible sources, options and enabled capability.
-2. A PostgreSQL transaction locks the credit account, reserves the immutable quote, creates the job and writes `job_outbox`. No event is sent before commit.
-3. The API attempts an Inngest enqueue. The per-minute outbox dispatcher retries undelivered events; queue failure does not erase committed work.
-4. Inngest's `generate-fashion-content` function uses a job idempotency expression, global step concurrency of three, and a per-organization step limit of one. A PostgreSQL advisory lock and claim/lease enforce persistent provider slots separately: at most three in-flight predictions globally and one per organization, including ambiguous submissions until reconciled. Jobs wait through durable 30-second sleeps for up to one hour when capacity is occupied; these waits do not issue a paid POST or consume retry attempts.
-5. `submit-once` resolves short-lived private source URLs, calls FASHN and returns only the prediction id to durable state. A separate retriable step persists that id. Subsequent polls read the existing prediction.
-6. Durable sleeps begin at 15 seconds and then use 30-second intervals. They do not hold a serverless request open. Polling is bounded to 100 iterations, approximately 49 minutes. Each step has three infrastructure retries.
-7. A completed response is downloaded from a documented official CDN origin, bounded by size and timeout, verified and copied to private storage. Deterministic asset ids, paths and output indices make transfer retries idempotent. Only verified recorded outputs permit successful credit settlement.
-8. Provider failure, invalid input, exhausted delivery or the bounded processing timeout releases the customer's reservation exactly once. Costs incurred upstream by a result that could not be delivered remain a business reconciliation issue.
+1. Verify actor or guest, tenant permission, source ownership, compatible settings and selected backend capability.
+2. Return a signed ten-minute quote bound to actor, organization, operation, inputs, settings and price. SQL repeats the price check atomically. Guest links preserve their approved price/provider.
+3. In one transaction, reserve credits, create the provider-pinned job and write the outbox. No provider submission precedes commit.
+4. Inngest delivers events, claims persistent capacity and uses durable sleeps to poll. Browser closure does not lose the job.
+5. Qwen uses the stable application job UUID for idempotent private-service submission; conflicting repeated inputs are rejected. FASHN retains its documented prediction lifecycle.
+6. Persist provider references and resume existing work. Unknown acceptance is reconciled before unsafe resubmission; never duplicate a potentially paid operation.
+7. Fetch real output bytes, validate and copy into private storage under deterministic retry-safe identifiers. Generated assets cannot be signed until their parent job succeeds. Only verified recorded output can settle the charge.
+8. Eligible failed or unrecoverable delivery releases reservations exactly once. Reconcile incurred GPU/provider costs separately from the customer's successful-delivery charge.
 
-The rolling circuit breaker pauses fresh submissions when five provider 5xx errors were recorded in the previous two minutes. Safe API-level 429/5xx rejections use a bounded exponential delay with jitter and at most three resubmissions. The account's actual purchased provider concurrency limit must be verified; lower the database claim limit if necessary. Inngest step concurrency by itself would not bound predictions running while durable steps sleep.
+FASHN's safe API-level rejection retries and circuit breaker remain. A lost submission response or expired submission lease without a prediction ID becomes `submission_ambiguous`; reconcile provider history before attaching a proven reference or releasing held credits. Do not clear ambiguity to force another request. Existing jobs do not switch provider when configuration changes.
 
-## Ambiguous submissions and recovery
+Managed workflow concurrency, database slots and GPU inference concurrency are separate. The selected GPU may require one inference at a time. Verify queue age, stuck-job alerts, restart handling, output expiry and failed-job settlement on the actual deployed systems.
 
-FASHN's reviewed documentation does not provide a client submission idempotency key. If a POST times out, a network response is lost, or a worker lease expires before the prediction id is durably known, the job becomes `retry_wait` with `submission_ambiguous`. **The application does not issue another paid POST.** Its reservation remains held and a structured alert identifies the job id. Operators must reconcile FASHN request history, attach the proven prediction id and replay the Inngest run, or perform an audited release after confirming no accepted prediction. Do not simply clear the ambiguity flag or click a new generation to recover the old one.
+## Media privacy and retention
 
-Known predictions resume after worker restarts. Inngest retries persisted steps. The administrative resume action emits a separate unique recovery event, handled by a per-job singleton workflow that only polls an existing prediction and cannot submit a new one; this avoids the initial job's 24-hour event-deduplication window. The five-minute maintenance function reports stuck jobs older than one hour and ambiguous leases through structured logs and Sentry when configured. Configure an operator alert rule for these events. Known unsubmitted jobs expire after 24 hours and release their reservations under a database lock; ambiguous submissions are excluded. A known prediction undelivered for 48 hours is refunded before the documented CDN retrieval window lapses. Lost Inngest runs can also be replayed in its dashboard; preserve completed `submit-once` results. Dashboard replay/retention limits depend on the configured Inngest plan and require a staging restart exercise.
+Uploads are byte/pixel-bounded, decoded/re-encoded by Sharp and stripped of metadata. Originals and safe thumbnails stay private. Object keys are generated server-side. Browser signatures default120sec and are clipped by retention. Worker-created source links are not returned to clients or durable step results.
 
-## Media and privacy
+Qwen receives photographs at the configured operator-hosted GPU endpoint. Its service uses temporary private inputs and expiring outputs. Confirm cleanup/deletion behavior against the service README and test the host's disks, logs and backups. Deleting an application object does not prove GPU-host or backup erasure.
 
-- Uploads are server-authorized. File signatures and Sharp decoding validate JPEG, PNG or WebP. SVG and animated formats are rejected. The public upload request and UI cap default to 4 MiB for Vercel compatibility; the internal decoder also enforces its bounded normalization limit. Maximum decoded pixels default to 40 million. Images are re-encoded with orientation applied and EXIF/location metadata stripped.
-- Originals and 640-by-800-bounded WebP previews are stored in the private `private-media` bucket under randomized, organization-prefixed paths. No storage path from a browser is accepted. Asset downloads are resolved from organization-scoped database ids and signed for 120 seconds by default (maximum 900 seconds, clipped to the asset's remaining retention period). Generated assets cannot be signed until their parent job is recorded as succeeded.
-- Service-only upload intents are written before object writes. Hourly cleanup removes abandoned files after one hour, verifies every path stays beneath the intended organization/asset prefix, and preserves any committed active asset even if the process crashed before deleting its intent. Generated assets carry an explicit tenant-bound job foreign key, so cleanup and consent deletion do not depend on a later output-row insert succeeding.
-- Provider source links last 900 seconds and are created within the submit step. They are not returned to browser clients or retained in Inngest step results. FASHN's request history retains submitted URL strings, so a short signature TTL reduces residual access.
-- Output transfer permits only HTTPS on the documented `cdn.fashn.ai` and `media.fashn.ai` origins. Credentials, alternate ports and redirects are rejected. Streaming transfers have hard bounds. Images undergo full decoding. Generated MP4s undergo bounded ISO BMFF box parsing and require movie/media boxes; this does not independently prove codec validity, so live video playback is a staging gate.
-- Try-on consent, session expiry, revocation and deletion are checked before submission and before copying outputs. A second check after transfer deletes an output if consent was withdrawn during transfer. Private guest photos and their generated representations expire after 24 hours by default; hourly cleanup deletes stored originals/previews, removes assets from failed jobs and retries pending `delete_session` privacy requests. Account/export/report requests remain in the reviewed privacy queue and must be serviced operationally.
-- Upstream processing cannot be cancelled by this application after FASHN accepts a request. A revoked session is blocked locally, its outputs are discarded, and customer credits are released when the job fails. Never claim upstream deletion based solely on deleting local objects.
-- Inngest receives job and organization ids and durable status, not customer image bytes. FASHN and its subprocessors process the photos. Configure processor contracts, access, retention and regional requirements before accepting customer data.
+Try-on consent is provider-specific and versioned. Qwen uses `2026-10-25-qwen-v1`; existing FASHN invitations retain their own version. Session expiry, revocation and withdrawal are checked during work and after output copy; withdrawn output is discarded. Customer originals/results default24h app retention. Cleanup retries session-deletion requests. Account/export/report requests require staffed privacy review.
 
-FASHN documents request records without automatic deletion, URL-output cleanup after three days, and different base64-output retention. The app uses URL outputs and copies them promptly. Local deletion does not demonstrate erasure of provider request metadata or subprocessor copies. Training is not enabled by this code; verify the actual provider account agreements and settings. Legal/privacy review remains required.
+Optional FASHN jobs send short-lived URLs to FASHN and its subprocessors. Its reviewed policy keeps request metadata without automatic deletion and schedules URL output removal after three days. No request-record deletion API is documented; use its current legal-request process. Those conditions do not describe a self-hosted Qwen job. [FASHN retention](https://docs.fashn.ai/api-overview/data-retention-privacy).
 
-## Configuration and verification
+## Staging acceptance
 
-Configure Supabase, its private bucket, the migration/seed, `FASHN_API_KEY`, Inngest event/signing keys and exactly the desired feature flags. Serve `/api/inngest` over HTTPS and register that endpoint in Inngest. Use `INNGEST_DEV=1` only with the local development server; production must reject development queue mode. A Vercel plan supporting the configured 120-second step execution budget is required. The long workflow runs through durable callbacks, not a 120-second total request.
+Real GPU photo acceptance must inspect garment details, likeness, unsupported inputs, memory, duration, cost, private transfer, restart/idempotency and cleanup. Separately assess customer multi-image visualization with adults' authorized synthetic/test images; disable it if unacceptable. Qwen has no video test because it has no video engine.
 
-Staging acceptance must exercise all three actual provider models with authorized synthetic/test images, inspect garment fidelity and disclosures, confirm actual credit headers, verify official output hosts and codecs, interrupt workers after submission and transfer, simulate payment and provider failures, verify private signed URLs fail for unrelated tenants, revoke/withdraw consent during processing, and demonstrate cleanup plus cost reconciliation. Do not enable a capability merely because its adapter unit tests pass.
-
-Sources: [FASHN fundamentals](https://docs.fashn.ai/api-overview/api-fundamentals), [Product to Model](https://docs.fashn.ai/api-reference/product-to-model), [Try-On Max](https://docs.fashn.ai/api-reference/tryon-max), [Image to Video](https://docs.fashn.ai/api-reference/image-to-video), [Error handling](https://docs.fashn.ai/api-overview/error-handling), [Data retention and privacy](https://docs.fashn.ai/api-overview/data-retention-privacy), [Inngest v4 functions](https://www.inngest.com/docs/reference/typescript/v4/functions/create), [Inngest HTTP serving](https://www.inngest.com/docs/learn/serving-inngest-functions).
+Optional FASHN acceptance covers only configured enabled models, output hosts, playback where relevant, cost and retention. Hosted Auth/RLS/storage, Inngest registration, withdrawal during processing and Paystack test settlement remain independent launch gates. Unit/CPU tests must never be reported as real model output.

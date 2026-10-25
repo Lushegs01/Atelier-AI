@@ -11,6 +11,10 @@ const schema = z.object({
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(20).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
   FASHN_API_KEY: z.string().min(8).optional(),
+  AI_PROVIDER: z.enum(["qwen", "fashn"]).default("qwen"),
+  QWEN_API_URL: z.url().optional(),
+  QWEN_API_KEY: z.string().min(32).optional(),
+  QWEN_ALLOW_INSECURE_LOCAL: flag,
   PAYSTACK_SECRET_KEY: z.string().min(8).optional(),
   NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: z.string().optional(),
   ALLOW_LIVE_PAYMENTS: flag,
@@ -60,11 +64,27 @@ export function environmentReadiness(input: Record<string, string | undefined> =
     ] as const
   ).filter((key) => !env[key]);
   const extra: string[] = [];
-  if (
-    (env.ENABLE_PHOTO_GENERATION || env.ENABLE_TRY_ON || env.ENABLE_VIDEO_GENERATION) &&
-    !env.FASHN_API_KEY
-  )
-    extra.push("FASHN_API_KEY");
+  const aiEnabled = env.ENABLE_PHOTO_GENERATION || env.ENABLE_TRY_ON || env.ENABLE_VIDEO_GENERATION;
+  if (aiEnabled && env.AI_PROVIDER === "fashn" && !env.FASHN_API_KEY) extra.push("FASHN_API_KEY");
+  if (aiEnabled && env.AI_PROVIDER === "qwen") {
+    if (!env.QWEN_API_URL) extra.push("QWEN_API_URL");
+    if (!env.QWEN_API_KEY) extra.push("QWEN_API_KEY");
+    if (env.ENABLE_VIDEO_GENERATION) extra.push("QWEN_VIDEO_UNSUPPORTED");
+    if (env.QWEN_API_URL && !env.QWEN_API_URL.startsWith("https://")) {
+      const host = new URL(env.QWEN_API_URL).hostname;
+      if (
+        env.NODE_ENV === "production" ||
+        !env.QWEN_ALLOW_INSECURE_LOCAL ||
+        !["localhost", "127.0.0.1", "[::1]"].includes(host)
+      )
+        extra.push("QWEN_HTTPS_ENDPOINT_REQUIRED");
+    }
+    if (env.QWEN_API_URL) {
+      const endpoint = new URL(env.QWEN_API_URL);
+      if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash)
+        extra.push("QWEN_ENDPOINT_INVALID");
+    }
+  }
   if (env.NODE_ENV === "production" && env.NEXT_PUBLIC_DEMO_MODE)
     extra.push("DEMO_MODE_MUST_BE_DISABLED");
   if (env.NODE_ENV === "production" && !env.NEXT_PUBLIC_APP_URL.startsWith("https://"))

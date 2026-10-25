@@ -1,6 +1,6 @@
 # API and application contracts
 
-All API records come from Supabase. There is no simulated authentication, purchase settlement or AI output endpoint. In an unconfigured local environment, `GET /api/workspace` and `GET /api/pricing` return `configured:false` and empty records. Protected mutations fail closed.
+All application records come from Supabase. There is no simulated authentication, purchase settlement or AI output endpoint. In an unconfigured local environment, `GET /api/workspace` and `GET /api/pricing` return `configured:false` and empty records. Protected mutations fail closed. Workspace responses include the selected public `provider` descriptor and `capabilities`; clients use these server-owned values to show availability, not browser flags. Default Qwen is still-image editing only; existing work stays pinned to its original provider/model.
 
 Responses use JSON and `Cache-Control: private, no-store`. Errors are non-2xx `{error,code}`; validation may include field names. Every browser mutation requires an exact `Origin` matching `NEXT_PUBLIC_APP_URL` (or the current request origin in local configuration). The Paystack webhook instead authenticates its raw body cryptographically. Body streams are bounded independently of Content-Length.
 
@@ -37,7 +37,7 @@ Supabase Auth validates sessions on the server with `getUser()`. Browser metadat
 | PATCH `/api/generations/[id]`         | `{outputId,approved}`; approval required before animating generated images                                                                                      |
 | DELETE `/api/generations/[id]`        | Delete completed output assets; never cancels a submitted provider operation                                                                                    |
 
-Categories: `dress,top,bottom,outerwear,accessory,other`. Views: `front,back,side,detail,mannequin,hanger,flat-lay`; full-garment workflows accept front/mannequin/hanger/flat-lay only. Photo options describe the adult model, pose and scene separately from the garment. Pricing currently permits one balanced1k image per request. Video options support5/10sec and480p/720p/1080p. Generated video sources require an approved photo; originals must be compatible images at least301×301px.
+Categories: `dress,top,bottom,outerwear,accessory,other`. Views: `front,back,side,detail,mannequin,hanger,flat-lay`; full-garment workflows accept front/mannequin/hanger/flat-lay only. Photo options describe the adult model, pose and scene separately from the garment. Initial Qwen editing produces one image with a roughly1K target. Its customer visualization is a separately enabled experimental multi-image edit, not validated fit. Qwen video requests fail before reservation. Optional FASHN retains balanced1k image output and5/10sec480p/720p/1080p video. Generated video sources require an approved campaign photo; customer try-on representations are excluded.
 
 Generation reservation creates a job, immutable ledger entry and outbox in one transaction. HTTP dispatch may fail after commit without losing the job. Retrying the same request must use the same idempotency key and same inputs. A changed payload requires a new quote/key. Unsupported or disabled provider capabilities return503 before credit reservation.
 
@@ -48,10 +48,10 @@ Generation reservation creates a job, immutable ledger entry and outbox in one t
 | POST `/api/try-on`                 | `{organizationId?,garmentId,expiresInHours?}` -> one-time displayed `{url,token,session,estimatedCredits}`; expiry1–168h, default72h                        |
 | DELETE `/api/try-on/sessions/[id]` | Designer revocation; organization scoped                                                                                                                    |
 | GET `/api/try-on/[token]`          | Only permitted brand/garment, this session's job/results and consent version; no tenant IDs, token hash, billing or other sessions                          |
-| POST `/api/try-on/[token]`         | Multipart `file,consent=true,consentVersion=2026-10-24-v1`; accepted consent recorded before storage; session use+credit reservation atomic                 |
+| POST `/api/try-on/[token]`         | Multipart `file,consent=true,consentVersion=<GET-disclosed version>`; accepted consent recorded before storage; session use+credit reservation atomic       |
 | DELETE `/api/try-on/[token]`       | JSON `{reason?}`; valid bearer token can request deletion even after natural expiry; access revoked, consent withdrawn and durable privacy cleanup recorded |
 
-Tokens are32 random bytes, only SHA-256 hashes are persisted. A completed session can view its own result until expiry/revocation; it cannot submit again. The link stores the designer-approved credit price and rejects changes before spending. Input and resulting customer images expire after24h by default (configuration bounded1–720h). There is no public result publishing or promotional reuse consent. See `AI-PROVIDERS.md` for upstream retention limits.
+Tokens are32 random bytes, only SHA-256 hashes are persisted. A completed session can view its own result until expiry/revocation; it cannot submit again. The link stores its provider/model and designer-approved credit price and rejects changed pricing/backend before spending. Guest GET includes the actual pinned provider disclosure, dynamic consent version and app retention hours; Qwen uses `2026-10-25-qwen-v1`, while historical FASHN links retain their disclosed version. The browser must show the provider before consent and cannot infer missing disclosures. App input/results expire after24h by default. There is no public publishing or promotional reuse consent. GPU-host/provider retention is separate; see `AI-PROVIDERS.md`.
 
 ## Billing, settings and administration
 
@@ -75,4 +75,4 @@ See source route schemas for exact administrative action fields. Full refunds re
 
 ## Verification boundary
 
-API unit tests use clearly identified synthetic users, mocked transport and test doubles. Database tests execute actual PostgreSQL policies/functions in PGlite with auth/storage harness schemas. Neither is evidence of Supabase Auth emails, live PostgREST, hosted storage signing, Inngest delivery or Paystack/FASHN acceptance. The staged browser workflows require configured test accounts and must pass before release.
+API unit tests use clearly identified synthetic users, mocked transport and test doubles. Database tests execute actual PostgreSQL policies/functions in PGlite with auth/storage harness schemas. Neither is evidence of Supabase Auth emails, live PostgREST, hosted storage signing, Inngest delivery, actual Qwen GPU inference or optional Paystack/FASHN acceptance. CPU inference-service contract tests are not model-output evidence. The staged workflows require configured systems and must pass before release.

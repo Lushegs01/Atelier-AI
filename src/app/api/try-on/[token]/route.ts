@@ -3,7 +3,19 @@ import { getAdminClient } from "@/lib/supabase/admin";
 import { consumeRateLimit } from "@/server/auth/context";
 import { ApiError, hashToken } from "@/server/auth/security";
 import { assertDatabaseResult, readImageForm, readJson, route } from "@/server/services/http";
-import { CONSENT_VERSION, getGuestSession } from "@/server/services/try-on";
+import {
+  getConsentVersion,
+  getGuestSession,
+  providerDisclosure,
+  requireSessionProvider,
+} from "@/server/services/try-on";
+import {
+  getActiveProviderId,
+  getProviderCapabilities,
+  type ProviderId,
+} from "@/server/ai/registry";
+import { getServerEnv } from "@/lib/env";
+import { purgeQwenPrediction } from "@/server/ai/cleanup";
 import { requireCapability } from "@/server/services/generations";
 import { reserveGeneration } from "@/server/billing/service";
 import { getAssetSignedUrl, uploadPrivateImage, deletePrivateAsset } from "@/server/storage/media";
@@ -17,6 +29,21 @@ export async function GET(request: Request, context: Context) {
     const session = await getGuestSession(token);
     await consumeRateLimit(`guest-read:${hashToken(token)}`, 90, 60);
     const admin = getAdminClient();
+    const capability = getProviderCapabilities(session.provider as ProviderId).find(
+      (item) => item.operation === "try_on",
+    );
+    let originalQuery = admin
+      .from("assets")
+      .select("id")
+      .eq("garment_id", session.garment_id)
+      .eq("organization_id", session.organization_id)
+      .in("kind", ["original", "garment_original"])
+      .in("view", [...(capability?.supportedViews || [])])
+      .gte("width", capability?.minInputDimension || 256)
+      .gte("height", capability?.minInputDimension || 256)
+      .is("deleted_at", null);
+    if (session.provider === "qwen")
+      originalQuery = originalQuery.lte("byte_size", 4 * 1024 * 1024);
     const [orgResult, garmentResult, originalResult] = await Promise.all([
       admin
         .from("organizations")
@@ -29,16 +56,7 @@ export async function GET(request: Request, context: Context) {
         .eq("id", session.garment_id)
         .eq("organization_id", session.organization_id)
         .maybeSingle(),
-      admin
-        .from("assets")
-        .select("id")
-        .eq("garment_id", session.garment_id)
-        .eq("organization_id", session.organization_id)
-        .in("kind", ["original", "garment_original"])
-        .is("deleted_at", null)
-        .order("created_at")
-        .limit(1)
-        .maybeSingle(),
+      originalQuery.order("created_at").limit(1).maybeSingle(),
     ]);
     if (
       !orgResult.data ||
@@ -98,8 +116,19 @@ export async function GET(request: Request, context: Context) {
       },
       job,
       outputs,
-      consentVersion: CONSENT_VERSION,
-      available: Boolean(process.env.FASHN_API_KEY && process.env.ENABLE_TRY_ON === "true"),
+      provider: {
+        ...providerDisclosure(session.provider as ProviderId, "try_on"),
+        model: session.provider_model,
+      },
+      consentVersion: getConsentVersion(session.provider as ProviderId),
+      retentionHours: getServerEnv().CUSTOMER_PHOTO_RETENTION_HOURS,
+      available:
+        session.provider === getActiveProviderId() &&
+        Boolean(
+          getProviderCapabilities(session.provider as ProviderId).find(
+            (capability) => capability.operation === "try_on",
+          )?.enabled,
+        ),
     };
   });
 }
@@ -110,11 +139,13 @@ export async function POST(request: Request, context: Context) {
     async () => {
       const { token } = await context.params;
       const session = await getGuestSession(token, true);
-      requireCapability("try_on");
+      const provider = requireSessionProvider(session.provider);
+      const capability = requireCapability("try_on");
       await consumeRateLimit(`guest-submit:${hashToken(token)}`, 5, 3600);
       await consumeRateLimit(`guest-org:${session.organization_id}`, 30, 3600);
       const { form, file } = await readImageForm(request);
-      if (form.get("consent") !== "true" || form.get("consentVersion") !== CONSENT_VERSION)
+      const consentVersion = getConsentVersion(provider);
+      if (form.get("consent") !== "true" || form.get("consentVersion") !== consentVersion)
         throw new ApiError(
           422,
           "Read the disclosure and give explicit consent before uploading.",
@@ -124,7 +155,7 @@ export async function POST(request: Request, context: Context) {
       const { error: consentError } = await admin.from("consents").insert({
         organization_id: session.organization_id,
         try_on_session_id: session.id,
-        version: CONSENT_VERSION,
+        version: consentVersion,
         purpose: "virtual_try_on",
       });
       assertDatabaseResult(consentError);
@@ -135,6 +166,16 @@ export async function POST(request: Request, context: Context) {
         kind: "customer_photo",
       });
       try {
+        if (
+          (asset.width || 0) < capability.minInputDimension ||
+          (asset.height || 0) < capability.minInputDimension ||
+          (provider === "qwen" && asset.byte_size > 4 * 1024 * 1024)
+        )
+          throw new ApiError(
+            422,
+            `Choose a photograph at least ${capability.minInputDimension} pixels wide and high${provider === "qwen" ? ", up to 4 MB" : ""}.`,
+            "SOURCE_INCOMPATIBLE",
+          );
         const job = await reserveGeneration({
           organizationId: session.organization_id,
           actorId: null,
@@ -145,6 +186,9 @@ export async function POST(request: Request, context: Context) {
           options: { tryOnSessionId: session.id },
           idempotencyKey: `tryon:${session.id}`,
           tryOnSessionId: session.id,
+          provider,
+          expectedCredits: session.quoted_credits ?? undefined,
+          expectedPriceRuleId: session.price_rule_id ?? undefined,
         });
         // Reuse is accepted only for the same immutable inputs; conflicting races are rejected by SQL.
         if (job.source_asset_id !== asset.id)
@@ -213,6 +257,10 @@ export async function DELETE(request: Request, context: Context) {
           organizationId: session.organization_id,
         }).catch(() => undefined);
       if (session.job_id) {
+        await purgeQwenPrediction({
+          organizationId: session.organization_id,
+          jobId: session.job_id,
+        }).catch(() => undefined);
         const { data: outputs } = await admin
           .from("generation_outputs")
           .select("asset_id")

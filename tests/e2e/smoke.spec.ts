@@ -12,7 +12,7 @@ test("public site navigation and editorial imagery", async ({ page }) => {
   await expect(
     page.getByText("This local workspace is waiting for Supabase configuration.", { exact: false }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Review cost & create" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Review cost & create" })).toBeDisabled();
   await page.screenshot({ path: test.info().outputPath("studio.png"), fullPage: true });
 });
 

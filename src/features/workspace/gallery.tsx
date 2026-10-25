@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   Camera,
   Film,
@@ -17,6 +18,7 @@ import { Badge, Button, Dialog, Empty, Notice, useToast } from "@/components/ui"
 import { useWorkspace, apiRequest, type Job, type Output } from "./context";
 import { PageHeading, SetupNotice, AiDisclosure } from "./common";
 import { dateLabel } from "@/lib/utils";
+import { operationAvailability } from "./provider";
 export async function downloadMedia(url: string, name: string) {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error("The download link expired. Refresh the page and try again.");
@@ -32,7 +34,10 @@ export async function downloadMedia(url: string, name: string) {
 }
 export function GalleryPage({ photos = false }: { photos?: boolean }) {
   const { data, loading } = useWorkspace();
-  const [type, setType] = useState(photos ? "photo" : "all");
+  const searchParams = useSearchParams();
+  const [type, setType] = useState(
+    photos ? "photo" : searchParams.get("type") === "video" ? "video" : "all",
+  );
   const notify = useToast();
   const outputs = data.outputs.filter(
     (o) =>
@@ -399,22 +404,34 @@ export function GenerationDetail({ id }: { id: string }) {
                       <Download size={14} />
                     </Button>
                   </div>
-                  {job?.operation !== "video" && output.approved_at && (
-                    <Button
-                      href={`/app/videos?source=${output.asset_id}`}
-                      size="small"
-                      className="mt-4 w-full"
-                    >
-                      <Film size={14} />
-                      Animate this photograph
-                    </Button>
-                  )}
+                  {job?.operation === "photo" &&
+                    output.approved_at &&
+                    operationAvailability("video", data.capabilities, data.provider).enabled && (
+                      <Button
+                        href={`/app/videos?source=${output.asset_id}`}
+                        size="small"
+                        className="mt-4 w-full"
+                      >
+                        <Film size={14} />
+                        Animate this photograph
+                      </Button>
+                    )}
                 </div>
               </article>
             ))}
           </div>
           <div className="mt-6">
-            <AiDisclosure video={job?.operation === "video"} />
+            <AiDisclosure
+              video={job?.operation === "video"}
+              provider={
+                job?.provider
+                  ? {
+                      id: job.provider,
+                      label: job.provider === "qwen" ? "Qwen Image Edit" : "FASHN",
+                    }
+                  : null
+              }
+            />
           </div>
           <div className="button-row mt-6">
             <Button variant="danger" size="small" onClick={() => setRemove(true)}>

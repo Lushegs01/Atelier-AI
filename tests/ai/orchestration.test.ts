@@ -72,6 +72,9 @@ function fakeQuery(table: string) {
     gte() {
       return query;
     },
+    lte() {
+      return query;
+    },
     order() {
       return query;
     },
@@ -126,14 +129,13 @@ vi.mock("@/lib/supabase/admin", () => ({
     },
   }),
 }));
-vi.mock("@/server/ai/fashn", () => ({
-  FashnProvider: class {
-    generateFashionImage = provider.generateFashionImage;
-    generateFashionVideo = provider.generateFashionVideo;
-    generateVirtualTryOn = provider.generateVirtualTryOn;
-    getGenerationStatus = provider.getGenerationStatus;
-  },
+vi.mock("@/server/ai/registry", () => ({
+  createProviderForJob: vi.fn(() => provider),
   assertCapabilityEnabled: vi.fn(),
+  getProviderCapabilities: () => [
+    { operation: "photo", minInputDimension: 15 },
+    { operation: "try_on", minInputDimension: 15 },
+  ],
 }));
 vi.mock("@/server/storage/media", () => ({
   ...media,
@@ -141,8 +143,13 @@ vi.mock("@/server/storage/media", () => ({
     `${jobId}:${index}:${kind}`,
 }));
 vi.mock("@sentry/nextjs", () => ({ captureMessage: vi.fn() }));
+vi.mock("@/workers/client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/workers/client")>()),
+  dispatchGenerationRecovery: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { ProviderError } from "@/server/ai/contracts";
+import { dispatchGenerationRecovery } from "@/workers/client";
 import {
   pollGenerationAndTransfer,
   reconcileExhaustedGeneration,
@@ -171,6 +178,8 @@ describe("generation lifecycle integration (database, queue, media and HTTP test
           organization_id: organizationId,
           status: "queued",
           operation: "photo",
+          provider: "fashn",
+          provider_model: "product-to-model",
           garment_id: "garment",
           source_asset_id: "source",
           input_asset_ids: ["source"],
@@ -223,6 +232,7 @@ describe("generation lifecycle integration (database, queue, media and HTTP test
     media.downloadAssetForProvider.mockResolvedValue("https://storage.example/short-lived-source");
     media.transferProviderOutput.mockResolvedValue({ id: "output-asset" });
     media.deletePrivateAsset.mockResolvedValue(undefined);
+    vi.mocked(dispatchGenerationRecovery).mockResolvedValue(undefined);
   });
 
   it("submits once, persists acceptance in a separate step, and resumes without a second paid POST", async () => {
@@ -249,6 +259,184 @@ describe("generation lifecycle integration (database, queue, media and HTTP test
     await recordAcceptedPrediction(jobId, accepted.id!);
     expect(job().provider_reference).toBe("known-prediction");
     expect(provider.generateFashionImage).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers Qwen acceptance by the stable UUID after a crash without another POST", async () => {
+    Object.assign(job(), {
+      provider: "qwen",
+      provider_model: "Qwen/Qwen-Image-Edit-2511",
+      status: "submitting",
+      lease_until: new Date(Date.now() - 1000).toISOString(),
+    });
+    provider.getGenerationStatus.mockResolvedValueOnce({
+      id: jobId,
+      status: "processing",
+      outputs: [],
+    });
+    await expect(submitGenerationOnce(jobId, organizationId)).resolves.toEqual({ id: jobId });
+    expect(provider.generateFashionImage).not.toHaveBeenCalled();
+    expect(provider.getGenerationStatus).toHaveBeenCalledWith(jobId);
+    expect(state.reserved).toBe(12);
+  });
+  it("replays only the same Qwen UUID when the durable service confirms no accepted job", async () => {
+    Object.assign(job(), {
+      provider: "qwen",
+      provider_model: "Qwen/Qwen-Image-Edit-2511",
+      status: "submitting",
+      lease_until: new Date(Date.now() - 1000).toISOString(),
+    });
+    provider.getGenerationStatus.mockRejectedValueOnce(
+      new ProviderError("not accepted", "qwen_job_not_found"),
+    );
+    provider.generateFashionImage.mockResolvedValueOnce({ id: jobId });
+    await expect(submitGenerationOnce(jobId, organizationId)).resolves.toEqual({ id: jobId });
+    expect(provider.generateFashionImage.mock.calls[0][2]).toEqual({ requestId: jobId });
+    expect(state.finalizations).toBe(0);
+  });
+  it("keeps an uncertain Qwen receipt reserved when the retry budget is exhausted", async () => {
+    Object.assign(job(), {
+      provider: "qwen",
+      provider_model: "Qwen/Qwen-Image-Edit-2511",
+      retry_count: 3,
+    });
+    provider.generateFashionImage.mockRejectedValueOnce(
+      new ProviderError("no response", "qwen_submission_unavailable", true),
+    );
+    provider.getGenerationStatus.mockRejectedValueOnce(
+      new ProviderError("offline", "qwen_status_unavailable", true),
+    );
+    await expect(submitGenerationOnce(jobId, organizationId)).rejects.toThrow(
+      "receipt needs recovery",
+    );
+    expect(job().error_code).toBe("submission_ambiguous");
+    expect(state.reserved).toBe(12);
+    expect(state.finalizations).toBe(0);
+  });
+  it("dispatches recovery for a deterministic Qwen receipt rather than refunding an accepted job", async () => {
+    Object.assign(job(), {
+      provider: "qwen",
+      provider_model: "Qwen/Qwen-Image-Edit-2511",
+      status: "retry_wait",
+      error_code: "submission_ambiguous",
+    });
+    provider.getGenerationStatus.mockResolvedValueOnce({
+      id: jobId,
+      status: "processing",
+      outputs: [],
+    });
+    await expect(reconcileExhaustedGeneration(jobId)).resolves.toBe("recovered");
+    expect(job().provider_reference).toBe(jobId);
+    expect(state.reserved).toBe(12);
+    expect(provider.generateFashionImage).not.toHaveBeenCalled();
+  });
+
+  it.each(["submitting", "retry_wait"])(
+    "keeps an accepted Qwen receipt recoverable when dispatch fails from %s",
+    async (status) => {
+      Object.assign(job(), {
+        provider: "qwen",
+        provider_model: "Qwen/Qwen-Image-Edit-2511",
+        status,
+        error_code: status === "retry_wait" ? "submission_ambiguous" : null,
+      });
+      provider.getGenerationStatus.mockResolvedValueOnce({
+        id: jobId,
+        status: "processing",
+        outputs: [],
+      });
+      vi.mocked(dispatchGenerationRecovery).mockRejectedValueOnce(new Error("queue unavailable"));
+
+      await expect(reconcileExhaustedGeneration(jobId)).resolves.toBe("manual");
+      expect(job()).toMatchObject({
+        provider_reference: jobId,
+        status: "retry_wait",
+        error_code: "recovery_dispatch_pending",
+        lease_until: null,
+      });
+      expect(state.reserved).toBe(12);
+      expect(state.available).toBe(0);
+      expect(state.finalizations).toBe(0);
+
+      // A later failure callback or maintenance replay can dispatch the saved receipt directly.
+      await expect(reconcileExhaustedGeneration(jobId)).resolves.toBe("recovered");
+      expect(dispatchGenerationRecovery).toHaveBeenNthCalledWith(2, jobId, organizationId);
+      expect(provider.getGenerationStatus).toHaveBeenCalledTimes(1);
+      expect(provider.generateFashionImage).not.toHaveBeenCalled();
+      expect(state.finalizations).toBe(0);
+
+      await expect(pollGenerationAndTransfer(jobId, jobId)).resolves.toEqual({
+        state: "succeeded",
+      });
+      expect(state.finalizations).toBe(1);
+      expect(state.available).toBe(0);
+    },
+  );
+
+  it("retains ambiguous receipt recovery when persisting acceptance fails before dispatch", async () => {
+    Object.assign(job(), {
+      provider: "qwen",
+      provider_model: "Qwen/Qwen-Image-Edit-2511",
+      status: "retry_wait",
+      error_code: "submission_ambiguous",
+    });
+    state.failNextUpdate = true;
+    await expect(reconcileExhaustedGeneration(jobId)).rejects.toThrow("persisted");
+    expect(job()).toMatchObject({
+      provider_reference: null,
+      status: "retry_wait",
+      error_code: "submission_ambiguous",
+    });
+    expect(dispatchGenerationRecovery).not.toHaveBeenCalled();
+    expect(state.finalizations).toBe(0);
+    expect(state.reserved).toBe(12);
+
+    await expect(reconcileExhaustedGeneration(jobId)).resolves.toBe("recovered");
+    expect(job()).toMatchObject({
+      provider_reference: jobId,
+      error_code: "recovery_dispatch_pending",
+    });
+  });
+
+  it.each(["processing", "retry_wait"])(
+    "dispatches stale known Qwen receipts from %s without refunding accepted inference",
+    async (status) => {
+      Object.assign(job(), {
+        provider: "qwen",
+        provider_model: "Qwen/Qwen-Image-Edit-2511",
+        provider_reference: jobId,
+        status,
+        error_code: status === "retry_wait" ? "transfer_retry" : null,
+      });
+      await expect(reconcileExhaustedGeneration(jobId)).resolves.toBe("recovered");
+      expect(job()).toMatchObject({
+        provider_reference: jobId,
+        status: "retry_wait",
+        error_code: "recovery_dispatch_pending",
+      });
+      expect(dispatchGenerationRecovery).toHaveBeenCalledWith(jobId, organizationId);
+      expect(provider.getGenerationStatus).not.toHaveBeenCalled();
+      expect(provider.generateFashionImage).not.toHaveBeenCalled();
+      expect(state.finalizations).toBe(0);
+      expect(state.reserved).toBe(12);
+    },
+  );
+
+  it("releases a Qwen reservation only when receipt lookup confirms it was not accepted", async () => {
+    Object.assign(job(), {
+      provider: "qwen",
+      provider_model: "Qwen/Qwen-Image-Edit-2511",
+      status: "retry_wait",
+      error_code: "submission_ambiguous",
+    });
+    provider.getGenerationStatus.mockRejectedValueOnce(
+      new ProviderError("not accepted", "qwen_job_not_found"),
+    );
+    await expect(reconcileExhaustedGeneration(jobId)).resolves.toBe("failed");
+    expect(job()).toMatchObject({ status: "failed", error_code: "qwen_not_accepted" });
+    expect(dispatchGenerationRecovery).not.toHaveBeenCalled();
+    expect(state.finalizations).toBe(1);
+    expect(state.reserved).toBe(0);
+    expect(state.available).toBe(12);
   });
 
   it("holds an ambiguous POST for reconciliation and never repeats it after exhausted retries", async () => {

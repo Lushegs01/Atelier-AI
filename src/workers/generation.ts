@@ -2,7 +2,12 @@ import "server-only";
 import { captureMessage } from "@sentry/nextjs";
 import { NonRetriableError, RetryAfterError } from "inngest";
 import { getAdminClient } from "@/lib/supabase/admin";
-import { FashnProvider, assertCapabilityEnabled } from "@/server/ai/fashn";
+import {
+  createProviderForJob,
+  assertCapabilityEnabled,
+  getProviderCapabilities,
+  type ProviderId,
+} from "@/server/ai/registry";
 import {
   GenerationOperation,
   ProviderError,
@@ -16,7 +21,12 @@ import {
   downloadAssetForProvider,
   transferProviderOutput,
 } from "@/server/storage/media";
-import { inngest, generationRequested, generationRecoveryRequested } from "./client";
+import {
+  inngest,
+  generationRequested,
+  generationRecoveryRequested,
+  dispatchGenerationRecovery,
+} from "./client";
 import { retryDelaySeconds, submissionDecision } from "./policy";
 
 interface Job {
@@ -24,6 +34,8 @@ interface Job {
   organization_id: string;
   status: string;
   operation: GenerationOperation;
+  provider: ProviderId;
+  provider_model: string;
   garment_id: string | null;
   source_asset_id: string | null;
   input_asset_ids: string[];
@@ -107,12 +119,24 @@ async function resolveGarmentSource(job: Job): Promise<string> {
     .is("deleted_at", null)
     .in("view", ["front", "mannequin", "hanger", "flat-lay"]);
   if (job.operation === "photo" && job.source_asset_id) query = query.eq("id", job.source_asset_id);
+  if (job.provider === "qwen")
+    query = query
+      .gte("width", 256)
+      .gte("height", 256)
+      .lte("byte_size", 4 * 1024 * 1024);
   const { data: asset } = await query.order("created_at").limit(1).maybeSingle();
   if (!asset)
     throw new NonRetriableError(
       "Upload a compatible front, mannequin, hanger or flat-lay garment photograph.",
     );
-  return downloadAssetForProvider({ organizationId: job.organization_id, assetId: asset.id });
+  return downloadAssetForProvider({
+    organizationId: job.organization_id,
+    assetId: asset.id,
+    minDimension:
+      getProviderCapabilities(job.provider).find(
+        (capability) => capability.operation === job.operation,
+      )?.minInputDimension ?? 15,
+  });
 }
 
 export async function submitGenerationOnce(
@@ -124,24 +148,54 @@ export async function submitGenerationOnce(
   if (decision === "terminal") return { id: job.provider_reference, terminal: true };
   if (decision === "resume") return { id: job.provider_reference };
   if (decision === "reconcile") {
-    await updateJob(job.id, {
-      status: "retry_wait",
-      error_code: "submission_ambiguous",
-      error_message:
-        "The provider submission needs operator reconciliation. A second paid request has not been submitted.",
-      lease_until: null,
-    });
-    throw new NonRetriableError("Provider submission requires reconciliation.");
+    if (job.provider === "qwen") {
+      await checkTryOnConsent(job);
+      try {
+        // Qwen's durable service uses this application UUID as its idempotent prediction id.
+        // A worker can recover acceptance without guessing or sending another inference request.
+        await createProviderForJob(job).getGenerationStatus(job.id);
+        return { id: job.id };
+      } catch (error) {
+        if (error instanceof ProviderError && error.code === "qwen_job_not_found") {
+          await updateJob(job.id, {
+            status: "retry_wait",
+            error_code: null,
+            error_message: null,
+            lease_until: null,
+          });
+        } else {
+          await updateJob(job.id, {
+            status: "retry_wait",
+            error_code: "submission_ambiguous",
+            lease_until: null,
+          });
+          throw new RetryAfterError(
+            "The private service receipt is being recovered. No new inference was submitted.",
+            "30s",
+          );
+        }
+      }
+    } else {
+      await updateJob(job.id, {
+        status: "retry_wait",
+        error_code: "submission_ambiguous",
+        error_message:
+          "The provider submission needs operator reconciliation. A second paid request has not been submitted.",
+        lease_until: null,
+      });
+      throw new NonRetriableError("Provider submission requires reconciliation.");
+    }
   }
   if (decision === "wait") return { id: null, waiting: true };
-  assertCapabilityEnabled(job.operation);
+  assertCapabilityEnabled(job.operation, job.provider);
   await checkTryOnConsent(job);
   const admin = getAdminClient();
   // A persistent rolling circuit breaker avoids a provider outage draining queued work.
   const { count, error: circuitError } = await admin
     .from("generation_jobs")
     .select("id", { count: "exact", head: true })
-    .like("error_code", "provider_http_5%")
+    .like("error_code", job.provider === "qwen" ? "qwen_http_5%" : "provider_http_5%")
+    .eq("provider", job.provider)
     .gte("updated_at", new Date(Date.now() - 120_000).toISOString());
   if (circuitError) throw new Error("Provider health could not be checked.");
   if ((count ?? 0) >= 5) throw new RetryAfterError("Provider circuit is cooling down.", "2m");
@@ -152,10 +206,12 @@ export async function submitGenerationOnce(
   if (claimError) throw new Error("The generation could not be claimed.");
   if (!claimed || !Array.isArray(claimed) || !claimed.length) return { id: null, waiting: true };
   try {
-    const provider = new FashnProvider();
+    const provider = createProviderForJob(job);
     if (job.operation === "photo") {
       const source = await resolveGarmentSource(job);
-      return await provider.generateFashionImage(source, imageOptionsSchema.parse(job.options));
+      return await provider.generateFashionImage(source, imageOptionsSchema.parse(job.options), {
+        requestId: job.id,
+      });
     }
     if (job.operation === "video") {
       if (!job.source_asset_id) throw new NonRetriableError("Select an image to animate.");
@@ -164,7 +220,9 @@ export async function submitGenerationOnce(
         assetId: job.source_asset_id,
         minDimension: 301,
       });
-      return await provider.generateFashionVideo(source, videoOptionsSchema.parse(job.options));
+      return await provider.generateFashionVideo(source, videoOptionsSchema.parse(job.options), {
+        requestId: job.id,
+      });
     }
     if (!job.source_asset_id)
       throw new NonRetriableError("A consented customer photograph is required.");
@@ -177,6 +235,7 @@ export async function submitGenerationOnce(
       product,
       person,
       tryOnOptionsSchema.parse(job.options),
+      { requestId: job.id },
     );
   } catch (error) {
     if (error instanceof ProviderError && error.ambiguous) {
@@ -200,6 +259,25 @@ export async function submitGenerationOnce(
         `${retryDelaySeconds(job.retry_count)}s`,
       );
     }
+    if (job.provider === "qwen" && error instanceof ProviderError && error.retryable) {
+      try {
+        await createProviderForJob(job).getGenerationStatus(job.id);
+        return { id: job.id };
+      } catch (receiptError) {
+        if (!(
+          receiptError instanceof ProviderError && receiptError.code === "qwen_job_not_found"
+        )) {
+          await updateJob(job.id, {
+            status: "retry_wait",
+            error_code: "submission_ambiguous",
+            lease_until: null,
+          });
+          throw new NonRetriableError(
+            "The private service receipt needs recovery. Credits remain reserved until acceptance is known.",
+          );
+        }
+      }
+    }
     await finishJob(
       job.id,
       false,
@@ -216,7 +294,7 @@ export async function pollGenerationAndTransfer(
   const job = await loadJob(jobId);
   if (["succeeded", "failed", "cancelled"].includes(job.status)) return { state: job.status };
   await checkTryOnConsent(job);
-  const prediction = await new FashnProvider().getGenerationStatus(reference);
+  const prediction = await createProviderForJob(job).getGenerationStatus(reference);
   if (prediction.creditsUsed !== undefined)
     await updateJob(job.id, { provider_credits_milli: prediction.creditsUsed * 1000 });
   if (prediction.status === "failed") {
@@ -235,6 +313,8 @@ export async function pollGenerationAndTransfer(
       jobId: job.id,
       index,
       url,
+      provider: job.provider,
+      providerReference: reference,
       isVideo: job.operation === "video",
       garmentId: job.garment_id ?? undefined,
       actorId: job.created_by,
@@ -294,9 +374,58 @@ export async function recordAcceptedPrediction(jobId: string, reference: string)
 
 export async function reconcileExhaustedGeneration(
   jobId: string,
-): Promise<"terminal" | "manual" | "failed"> {
+): Promise<"terminal" | "manual" | "failed" | "recovered"> {
   const job = await loadJob(jobId);
   if (["succeeded", "failed", "cancelled"].includes(job.status)) return "terminal";
+  const recoverAcceptedPrediction = async (reference: string): Promise<"manual" | "recovered"> => {
+    // Persist the receipt and the recovery intent together. A queue outage or a process crash
+    // after this write must leave a row that maintenance can enqueue without another POST.
+    await updateJob(job.id, {
+      provider_reference: reference,
+      status: "retry_wait",
+      error_code: "recovery_dispatch_pending",
+      error_message: "The accepted provider result is waiting for recovery.",
+      lease_until: null,
+    });
+    try {
+      await dispatchGenerationRecovery(job.id, job.organization_id);
+      // The recovery poll clears the marker when it makes progress. Keeping it until then
+      // also covers successful queue delivery followed by a lost worker invocation.
+      return "recovered";
+    } catch {
+      captureMessage("Known prediction recovery dispatch requires retry", {
+        level: "error",
+        tags: { component: "generation-recovery" },
+        extra: { jobId: job.id },
+      });
+      return "manual";
+    }
+  };
+  if (
+    job.provider_reference &&
+    (job.provider === "qwen" || job.error_code === "recovery_dispatch_pending")
+  )
+    return recoverAcceptedPrediction(job.provider_reference);
+  if (
+    job.provider === "qwen" &&
+    !job.provider_reference &&
+    (job.status === "submitting" || job.error_code === "submission_ambiguous")
+  ) {
+    let receiptAccepted = false;
+    try {
+      await createProviderForJob(job).getGenerationStatus(job.id);
+      receiptAccepted = true;
+    } catch (error) {
+      if (error instanceof ProviderError && error.code === "qwen_job_not_found") {
+        await finishJob(job.id, false, "qwen_not_accepted");
+        return "failed";
+      }
+      // An unavailable service cannot prove rejection; retain the reservation for recovery.
+    }
+    // Keep persistence and queue errors outside the receipt lookup catch. Neither is evidence
+    // that the service rejected this generation, even if the loaded row has no reference yet.
+    if (receiptAccepted) return recoverAcceptedPrediction(job.id);
+  }
   if (
     !job.provider_reference &&
     (job.status === "submitting" || job.error_code === "submission_ambiguous")
@@ -333,6 +462,10 @@ export const generateFashionContent = inngest.createFunction(
       const original = event.data.event.data as { jobId?: string };
       if (!original.jobId) return;
       const state = await reconcileExhaustedGeneration(original.jobId);
+      if (state === "recovered") {
+        logger.info("generation.receipt_recovered", { jobId: original.jobId });
+        return;
+      }
       if (state !== "terminal")
         logger.error(
           state === "manual" ? "generation.reconciliation_required" : "generation.failed",

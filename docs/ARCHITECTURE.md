@@ -6,6 +6,19 @@ Supabase Auth is verified with `getUser()` rather than trusting browser metadata
 
 ## Generation
 
+`AI_PROVIDER=qwen` selects the default operator-hosted `Qwen/Qwen-Image-Edit-2511` service. An explicit `fashn` selection retains the optional original adapter. Jobs and customer invitations pin their provider/model; changing configuration never reroutes existing customer work. Qwen produces experimental still-image edits and separately enabled customer visualization. It has no video operation. The GPU service is a separate runtime from the Next.js web host.
+
+```mermaid
+flowchart LR
+  Browser[Designer or consented customer] --> Web[Next.js web application]
+  Web --> DB[Supabase Auth / PostgreSQL / private Storage]
+  Web --> Queue[Inngest durable jobs]
+  Queue --> Qwen[Operator-hosted Python CUDA GPU service]
+  Queue --> Optional[Optional explicitly selected FASHN]
+  Qwen --> Private[Verified output transferred to private Storage]
+  Optional --> Private
+```
+
 1. Validate organization, permission, input ownership, model compatibility, options and feature availability.
 2. Return a signed quote binding the actor, organization, inputs, settings, price and ten-minute expiry.
 3. The SQL reservation locks the credit account and checks the current quoted price, balance, spending limit and idempotency key. The reservation, job and outbox are committed together.

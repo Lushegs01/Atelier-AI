@@ -1,6 +1,8 @@
 import "server-only";
 import { captureMessage } from "@sentry/nextjs";
 import { getAdminClient } from "@/lib/supabase/admin";
+import { purgeQwenPrediction } from "@/server/ai/cleanup";
+import { reconcileExhaustedGeneration } from "./generation";
 import { cleanAbandonedUploads, deletePrivateAsset } from "@/server/storage/media";
 import { inngest, generationRequested } from "./client";
 
@@ -51,8 +53,8 @@ export const recoverStuckGenerations = inngest.createFunction(
   async ({ step, logger }) => {
     const stuck = await step.run("inspect-jobs", async () => {
       const admin = getAdminClient();
-      // A worker may have crashed after FASHN accepted a POST but before it persisted the id.
-      // Preserve the reservation and prevent another POST; an operator reviews provider history.
+      // Preserve the reservation after an uncertain POST. Qwen can recover by its stable UUID;
+      // legacy providers without idempotent receipts still require operator review.
       const { data, error } = await admin
         .from("generation_jobs")
         .update({
@@ -66,8 +68,27 @@ export const recoverStuckGenerations = inngest.createFunction(
         .eq("status", "submitting")
         .is("provider_reference", null)
         .lt("lease_until", new Date().toISOString())
-        .select("id");
+        .select("id,provider");
       if (error) throw new Error("Submission reconciliation check failed.");
+      const { data: pending, error: pendingError } = await admin
+        .from("generation_jobs")
+        .select("id,provider")
+        .eq("provider", "qwen")
+        .eq("status", "retry_wait")
+        .in("error_code", ["submission_ambiguous", "recovery_dispatch_pending"])
+        .order("updated_at")
+        .limit(50);
+      if (pendingError) throw new Error("Pending Qwen receipt inspection failed.");
+      const { data: known, error: knownError } = await admin
+        .from("generation_jobs")
+        .select("id,provider")
+        .eq("provider", "qwen")
+        .in("status", ["processing", "retry_wait"])
+        .not("provider_reference", "is", null)
+        .lt("updated_at", new Date(Date.now() - 300_000).toISOString())
+        .order("updated_at")
+        .limit(50);
+      if (knownError) throw new Error("Known Qwen receipt inspection failed.");
       const { data: aged, error: agedError } = await admin
         .from("generation_jobs")
         .select("id,status,provider_reference,error_code")
@@ -75,21 +96,34 @@ export const recoverStuckGenerations = inngest.createFunction(
         .lt("created_at", new Date(Date.now() - 3_600_000).toISOString())
         .limit(100);
       if (agedError) throw new Error("Stuck generation inspection failed.");
-      return { ambiguous: data ?? [], aged: aged ?? [] };
+      const recoverable = new Map(
+        [...(data ?? []), ...(pending ?? []), ...(known ?? [])].map((row) => [row.id, row]),
+      );
+      return { ambiguous: [...recoverable.values()], aged: aged ?? [] };
     });
-    for (const row of stuck.ambiguous) logger.error("generation.ambiguous", { jobId: row.id });
+    const manual: string[] = [];
+    for (const row of stuck.ambiguous) {
+      if (row.provider === "qwen") {
+        const recovered = await step.run(`recover-qwen-receipt-${row.id}`, () =>
+          reconcileExhaustedGeneration(row.id),
+        );
+        if (recovered !== "manual") continue;
+      }
+      manual.push(row.id);
+      logger.error("generation.ambiguous", { jobId: row.id });
+    }
     for (const row of stuck.aged)
       logger.error("generation.stuck", {
         jobId: row.id,
         state: row.status,
         requiresReconciliation: row.error_code === "submission_ambiguous",
       });
-    if (stuck.ambiguous.length || stuck.aged.length)
+    if (manual.length || stuck.aged.length)
       captureMessage("Generation queue requires operator attention", {
         level: "error",
         tags: { component: "generation-recovery" },
         extra: {
-          ambiguousJobIds: stuck.ambiguous.map((row) => row.id),
+          ambiguousJobIds: manual,
           agedJobIds: stuck.aged.map((row) => row.id),
         },
       });
@@ -136,7 +170,7 @@ export const recoverStuckGenerations = inngest.createFunction(
 
 export const cleanPrivateMedia = inngest.createFunction(
   { id: "clean-private-media", triggers: { cron: "15 * * * *" }, concurrency: 1, retries: 3 },
-  async ({ step }) => {
+  async ({ step, logger }) => {
     const expired = await step.run("delete-expired-photos", async () => {
       const admin = getAdminClient();
       const { data, error } = await admin
@@ -147,9 +181,16 @@ export const cleanPrivateMedia = inngest.createFunction(
         .lt("expires_at", new Date().toISOString())
         .limit(100);
       if (error) throw new Error("Media retention inspection failed.");
-      for (const asset of data ?? [])
-        await deletePrivateAsset({ organizationId: asset.organization_id, assetId: asset.id });
-      return { deleted: data?.length ?? 0 };
+      let deleted = 0;
+      for (const asset of data ?? []) {
+        try {
+          await deletePrivateAsset({ organizationId: asset.organization_id, assetId: asset.id });
+          deleted++;
+        } catch {
+          logger.warn("media.retention_pending", { assetId: asset.id });
+        }
+      }
+      return { deleted };
     });
     const requests = await step.run("retry-session-deletions", async () => {
       const admin = getAdminClient();
@@ -161,40 +202,71 @@ export const cleanPrivateMedia = inngest.createFunction(
         .order("created_at")
         .limit(50);
       if (error) throw new Error("Privacy cleanup inspection failed.");
+      let completed = 0;
       for (const request of data ?? []) {
         if (!request.organization_id || !request.try_on_session_id) continue;
-        const { data: session, error: sessionError } = await admin
-          .from("try_on_sessions")
-          .select("customer_asset_id,job_id")
-          .eq("id", request.try_on_session_id)
-          .eq("organization_id", request.organization_id)
-          .single();
-        if (sessionError || !session) throw new Error("Privacy cleanup session is missing.");
-        if (session.customer_asset_id)
-          await deletePrivateAsset({
-            organizationId: request.organization_id,
-            assetId: session.customer_asset_id,
-          });
-        if (session.job_id) {
-          const { data: outputs, error: outputsError } = await admin
-            .from("assets")
-            .select("id")
-            .eq("generation_job_id", session.job_id)
-            .eq("organization_id", request.organization_id);
-          if (outputsError) throw new Error("Privacy cleanup outputs could not be inspected.");
-          for (const output of outputs ?? [])
+        try {
+          const { data: session, error: sessionError } = await admin
+            .from("try_on_sessions")
+            .select("customer_asset_id,job_id")
+            .eq("id", request.try_on_session_id)
+            .eq("organization_id", request.organization_id)
+            .single();
+          if (sessionError || !session) throw new Error("Privacy cleanup session is missing.");
+          if (session.customer_asset_id)
             await deletePrivateAsset({
               organizationId: request.organization_id,
-              assetId: output.id,
+              assetId: session.customer_asset_id,
             });
+          if (session.job_id) {
+            const { data: outputs, error: outputsError } = await admin
+              .from("assets")
+              .select("id")
+              .eq("generation_job_id", session.job_id)
+              .eq("organization_id", request.organization_id);
+            if (outputsError) throw new Error("Privacy cleanup outputs could not be inspected.");
+            for (const output of outputs ?? [])
+              await deletePrivateAsset({
+                organizationId: request.organization_id,
+                assetId: output.id,
+              });
+            await purgeQwenPrediction({
+              organizationId: request.organization_id,
+              jobId: session.job_id,
+            });
+          }
+          const { error: completedError } = await admin
+            .from("privacy_requests")
+            .update({ status: "completed", completed_at: new Date().toISOString() })
+            .eq("id", request.id);
+          if (completedError) throw new Error("Privacy cleanup completion could not be recorded.");
+          completed++;
+        } catch {
+          logger.warn("privacy.deletion_pending", { requestId: request.id });
         }
-        const { error: completedError } = await admin
-          .from("privacy_requests")
-          .update({ status: "completed", completed_at: new Date().toISOString() })
-          .eq("id", request.id);
-        if (completedError) throw new Error("Privacy cleanup completion could not be recorded.");
       }
-      return { completed: data?.length ?? 0 };
+      return { completed };
+    });
+    const inferenceDeleted = await step.run("retry-private-inference-deletions", async () => {
+      const { data, error } = await getAdminClient()
+        .from("generation_jobs")
+        .select("id,organization_id")
+        .eq("provider", "qwen")
+        .not("inference_delete_requested_at", "is", null)
+        .is("inference_delete_completed_at", null)
+        .order("inference_delete_requested_at")
+        .limit(100);
+      if (error) throw new Error("Private inference deletion inspection failed.");
+      let completed = 0;
+      for (const job of data ?? []) {
+        try {
+          await purgeQwenPrediction({ organizationId: job.organization_id, jobId: job.id });
+          completed++;
+        } catch {
+          logger.warn("inference.deletion_pending", { jobId: job.id });
+        }
+      }
+      return completed;
     });
     const abandoned = await step.run("clean-abandoned-uploads", () => cleanAbandonedUploads());
     const failedOutputs = await step.run("clean-failed-generation-assets", async () => {
@@ -209,10 +281,17 @@ export const cleanPrivateMedia = inngest.createFunction(
         .is("deleted_at", null)
         .limit(100);
       if (assetError) throw new Error("Failed generation asset inspection failed.");
-      for (const asset of assets ?? [])
-        await deletePrivateAsset({ organizationId: asset.organization_id, assetId: asset.id });
-      return assets?.length ?? 0;
+      let deleted = 0;
+      for (const asset of assets ?? []) {
+        try {
+          await deletePrivateAsset({ organizationId: asset.organization_id, assetId: asset.id });
+          deleted++;
+        } catch {
+          logger.warn("media.failed_output_deletion_pending", { assetId: asset.id });
+        }
+      }
+      return deleted;
     });
-    return { ...expired, ...requests, abandoned, failedOutputs };
+    return { ...expired, ...requests, inferenceDeleted, abandoned, failedOutputs };
   },
 );

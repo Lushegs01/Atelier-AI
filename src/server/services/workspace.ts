@@ -3,9 +3,13 @@ import { hasSupabaseConfig } from "@/lib/supabase/admin";
 import { requireUser } from "@/server/auth/context";
 import { ApiError } from "@/server/auth/security";
 import { getAssetSignedUrl } from "@/server/storage/media";
+import { getActiveProviderId, getProviderCapabilities } from "@/server/ai/registry";
+import { providerDisclosure } from "./try-on";
 
 export async function getWorkspace(organizationId?: string, page = 1) {
   const empty = {
+    provider: providerDisclosure(getActiveProviderId()),
+    capabilities: getProviderCapabilities(),
     organization: null,
     role: null,
     garments: [],
@@ -200,6 +204,8 @@ export async function getWorkspace(organizationId?: string, page = 1) {
   const orgRow = organization as Record<string, unknown>;
   return {
     configured: true,
+    provider: providerDisclosure(getActiveProviderId()),
+    capabilities: getProviderCapabilities(),
     user: {
       id: user.id,
       email: user.email,
@@ -220,6 +226,8 @@ export async function getWorkspace(organizationId?: string, page = 1) {
       id: job.id,
       garment_id: job.garment_id,
       operation: job.operation,
+      provider: job.provider,
+      provider_model: job.provider_model,
       status: job.status,
       estimated_credits: job.estimated_credits,
       settled_credits: job.settled_credits,
@@ -262,6 +270,8 @@ export async function getWorkspace(organizationId?: string, page = 1) {
       max_uses: row.max_uses,
       uses: row.uses,
       job_id: row.job_id,
+      provider: row.provider,
+      provider_model: row.provider_model,
       created_at: row.created_at,
     })),
     packages: ((packages || []) as Record<string, unknown>[]).map((row) => ({

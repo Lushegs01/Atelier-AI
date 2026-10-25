@@ -10,3 +10,14 @@ test-results/
 *.tsbuildinfo
 *.log
 .local/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+inference/qwen/data/
+inference/qwen/weights/
+*.sqlite
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm

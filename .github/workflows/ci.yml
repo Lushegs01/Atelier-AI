@@ -12,6 +12,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  qwen-service:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: inference/qwen/requirements-test.txt
+      # CPU contract/security tests inject a test engine; this is not a live GPU inference check.
+      - run: python -m pip install -r inference/qwen/requirements-test.txt
+      - run: python -m pip check
+      - run: python -m ruff format --check inference/qwen
+      - run: python -m ruff check inference/qwen
+      - run: python -m unittest discover -s inference/qwen/tests -v
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
