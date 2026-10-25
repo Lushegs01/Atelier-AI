@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FashnProvider, getProviderCapabilities } from "@/server/ai/fashn";
+import { FashnProvider, getFashnCapabilities } from "@/server/ai/fashn";
+import { QwenProvider } from "@/server/ai/qwen";
+import {
+  activeProviderName,
+  activeProviderLabel,
+  createFashionProvider,
+  getProviderCapabilities,
+  providerOutputHosts,
+} from "@/server/ai/provider";
 import {
   estimateProviderCredits,
   imageOptionsSchema,
@@ -8,6 +16,37 @@ import {
 } from "@/server/ai/contracts";
 
 const id = "123a87r9-4129-4bb3-be18-9c9fb5bd7fc1-u1";
+
+describe("provider factory compatibility", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each(["", "qwen"])("selects Qwen for AI_PROVIDER=%s without a hosted fallback", (value) => {
+    vi.stubEnv("AI_PROVIDER", value);
+    vi.stubEnv("HF_TOKEN", "hf_synthetic-test-token");
+    expect(activeProviderName()).toBe("qwen");
+    expect(activeProviderLabel()).toBe("Qwen Image Edit");
+    expect(createFashionProvider()).toBeInstanceOf(QwenProvider);
+    expect(getProviderCapabilities().every((capability) => capability.provider === "qwen")).toBe(
+      true,
+    );
+    expect(providerOutputHosts()).toEqual([]);
+    expect(() => createFashionProvider("video")).toThrow("does not support video");
+  });
+
+  it("retains FASHN only when explicitly selected", () => {
+    vi.stubEnv("AI_PROVIDER", "fashn");
+    expect(activeProviderName()).toBe("fashn");
+    expect(activeProviderLabel()).toBe("FASHN");
+    expect(createFashionProvider()).toBeInstanceOf(FashnProvider);
+    expect(providerOutputHosts()).toEqual(["cdn.fashn.ai", "media.fashn.ai"]);
+  });
+
+  it("rejects an unsupported configured provider without selecting Hugging Face", () => {
+    vi.stubEnv("AI_PROVIDER", "huggingface");
+    expect(() => activeProviderName()).toThrow("unsupported");
+    expect(() => createFashionProvider()).toThrow("unsupported");
+  });
+});
 
 describe("FASHN adapter contracts (HTTP test doubles; no live AI calls)", () => {
   beforeEach(() => {
@@ -146,11 +185,11 @@ describe("FASHN adapter contracts (HTTP test doubles; no live AI calls)", () => 
 
   it("disables all unstable endpoints unless flags and credentials are configured", () => {
     vi.stubEnv("FASHN_API_KEY", "");
-    expect(getProviderCapabilities().every((capability) => !capability.enabled)).toBe(true);
+    expect(getFashnCapabilities().every((capability) => !capability.enabled)).toBe(true);
     vi.stubEnv("FASHN_API_KEY", "test-key");
     vi.stubEnv("ENABLE_VIDEO_GENERATION", "false");
     expect(
-      getProviderCapabilities().find((capability) => capability.operation === "video"),
+      getFashnCapabilities().find((capability) => capability.operation === "video"),
     ).toMatchObject({ lifecycle: "Experimental", enabled: false });
   });
 

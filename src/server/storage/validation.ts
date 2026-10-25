@@ -96,8 +96,11 @@ export async function createThumbnail(buffer: Buffer): Promise<Buffer> {
     .toBuffer();
 }
 
-/** Only documented provider CDN origins; redirects are separately rejected. */
-export function validateProviderOutputUrl(value: string): URL {
+/** Exact configured output origins; the default remains FASHN's documented CDNs. */
+export function validateProviderOutputUrl(
+  value: string,
+  allowedHosts: readonly string[] = ["cdn.fashn.ai", "media.fashn.ai"],
+): URL {
   let url: URL;
   try {
     url = new URL(value);
@@ -106,7 +109,7 @@ export function validateProviderOutputUrl(value: string): URL {
   }
   if (
     url.protocol !== "https:" ||
-    !["cdn.fashn.ai", "media.fashn.ai"].includes(url.hostname) ||
+    !allowedHosts.includes(url.hostname) ||
     url.port ||
     url.username ||
     url.password

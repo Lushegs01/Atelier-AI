@@ -4,18 +4,18 @@ The application now defaults to a private, operator-hosted `Qwen/Qwen-Image-Edit
 
 ## Local evidence
 
-| Check                                   | Result                                                          |
-| --------------------------------------- | --------------------------------------------------------------- |
-| `npm test`                              | 222 tests passed across 22 files, including SQL tests           |
-| `npm run db:validate`                   | 62 SQL tests passed; included in the full test total above      |
-| `npm run test:e2e -- --workers=1`       | 20 desktop/mobile Chromium tests passed                         |
-| Python service `unittest discover`      | 20 CPU control-plane tests passed using an injected test engine |
-| Qwen TypeScript adapter tests           | 18 passed; included in the full test total above                |
-| TypeScript, ESLint, Prettier            | Passed                                                          |
-| Python Ruff format/lint and `pip check` | Passed                                                          |
-| `npm audit --audit-level=high`          | Zero reported vulnerabilities                                   |
-| `npm run scan:secrets`                  | Passed; heuristic scan only                                     |
-| Production build                        | Passed                                                          |
+| Check                                   | Result                                                                        |
+| --------------------------------------- | ----------------------------------------------------------------------------- |
+| `npm test`                              | 251 tests passed across 23 files, including SQL and retained HF adapter tests |
+| `npm run db:validate`                   | 62 SQL tests passed; included in the full test total above                    |
+| `npm run test:e2e -- --workers=1`       | 20 desktop/mobile Chromium tests passed                                       |
+| Python service `unittest discover`      | 20 CPU control-plane tests passed using an injected test engine               |
+| Qwen TypeScript adapter tests           | 18 passed; included in the full test total above                              |
+| TypeScript, ESLint, Prettier            | Passed                                                                        |
+| Python Ruff format/lint and `pip check` | Passed                                                                        |
+| `npm audit --audit-level=high`          | Zero reported vulnerabilities                                                 |
+| `npm run scan:secrets`                  | Passed; heuristic scan only                                                   |
+| Production build                        | Passed                                                                        |
 
 Tests cover provider/model pinning, reviewed provider-specific prices, immutable financial reservations, tenant boundaries, source validation, private credential forwarding, durable receipt recovery, consent revocation, deletion races and cleanup continuing during individual failures. Database tests execute SQL in PGlite with substituted Supabase auth/storage schemas. Browser provider scenarios use explicitly synthetic API fixtures; they are interface contract tests.
 
@@ -24,6 +24,8 @@ The GPU service's test engine is injected only by CPU tests. There is no product
 The built production server was started locally: homepage and health returned 200, readiness returned 503, and the workspace API returned only the explicit unconfigured empty state. The Inngest endpoint returned 500 with the SDK's missing-signing-key diagnostic, as expected without production credentials; this is not a successful cloud sync. The endpoint must be configured and redeployed before registration. Both owned preview servers were stopped after verification.
 
 ## Outstanding acceptance
+
+Before the final push, remote `main` received a separate Hugging Face Spaces implementation (`f9a213c`, merged in `3cb07e0`). That history and its standalone adapter/tests were preserved while Qwen remains the selected provider under the current request. The HF adapter is unregistered in the active Qwen/FASHN registry. Its imported verification report is [retained separately](HUGGINGFACE-VERIFICATION.md); its claims are not counted as Qwen acceptance.
 
 No NVIDIA GPU, Docker image startup, real model generation, garment fidelity, latency, throughput or GPU-memory requirement has been verified. This PC has Intel Iris Xe and cannot run the supplied CUDA inference engine. No hosting was purchased, no remote GPU was provisioned and no app deployment was performed.
 

@@ -8,12 +8,15 @@ import {
   Prediction,
   ProviderCapability,
   ProviderError,
+  requireEnabledCapability,
   imageOptionsSchema,
   videoOptionsSchema,
   tryOnOptionsSchema,
 } from "./contracts";
 
 const API = "https://api.fashn.ai/v1";
+/** Documented output CDN origins; redirects are separately rejected. */
+export const FASHN_OUTPUT_HOSTS = ["cdn.fashn.ai", "media.fashn.ai"] as const;
 const predictionSchema = z.object({
   id: z.string().min(1).max(180),
   status: z.enum(["starting", "in_queue", "processing", "completed", "failed"]),
@@ -22,7 +25,7 @@ const predictionSchema = z.object({
 });
 const submissionSchema = z.object({ id: z.string().min(1).max(180), error: z.unknown().nullish() });
 
-export function getProviderCapabilities(): ProviderCapability[] {
+export function getFashnCapabilities(): ProviderCapability[] {
   const configured = Boolean(process.env.FASHN_API_KEY);
   return [
     {
@@ -52,15 +55,11 @@ export function getProviderCapabilities(): ProviderCapability[] {
   ];
 }
 
+/** Retain the original export for callers that pin the FASHN adapter explicitly. */
+export const getProviderCapabilities = getFashnCapabilities;
+
 export function assertCapabilityEnabled(operation: ProviderCapability["operation"]): void {
-  if (
-    !getProviderCapabilities().find((capability) => capability.operation === operation)?.enabled
-  ) {
-    throw new ProviderError(
-      "This generation capability is unavailable. The workspace owner must configure and enable it.",
-      "capability_disabled",
-    );
-  }
+  requireEnabledCapability(getFashnCapabilities(), operation);
 }
 
 /** Exact endpoint schemas verified against official FASHN docs on 24 October 2026. */
@@ -71,11 +70,11 @@ export class FashnProvider implements FashionProvider {
   ) {}
 
   getProviderCapabilities(): ProviderCapability[] {
-    return getProviderCapabilities();
+    return getFashnCapabilities();
   }
 
   async generateFashionImage(source: string, raw: ImageOptions): Promise<{ id: string }> {
-    assertCapabilityEnabled("photo");
+    requireEnabledCapability(getFashnCapabilities(), "photo");
     const options = imageOptionsSchema.parse(raw);
     return this.submit("product-to-model", {
       product_image: source,
@@ -91,7 +90,7 @@ export class FashnProvider implements FashionProvider {
   }
 
   async generateFashionVideo(source: string, raw: VideoOptions): Promise<{ id: string }> {
-    assertCapabilityEnabled("video");
+    requireEnabledCapability(getFashnCapabilities(), "video");
     const options = videoOptionsSchema.parse(raw);
     return this.submit("image-to-video", {
       image: source,
@@ -106,7 +105,7 @@ export class FashnProvider implements FashionProvider {
     person: string,
     raw: TryOnOptions,
   ): Promise<{ id: string }> {
-    assertCapabilityEnabled("try_on");
+    requireEnabledCapability(getFashnCapabilities(), "try_on");
     const options = tryOnOptionsSchema.parse(raw);
     return this.submit("tryon-max", {
       product_image: product,
