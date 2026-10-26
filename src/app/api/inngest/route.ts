@@ -5,7 +5,9 @@ import { cleanPrivateMedia, dispatchOutbox, recoverStuckGenerations } from "@/wo
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+// A Hugging Face result read holds its stream for up to HF_RESULT_WAIT_SECONDS (default 240 s),
+// because closing it early cancels the Space job. Lower that setting if your host caps below 300 s.
+export const maxDuration = 300;
 
 export const { GET, POST, PUT } = serve({
   client: inngest,

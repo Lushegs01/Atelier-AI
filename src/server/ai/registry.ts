@@ -14,7 +14,7 @@ const PROVIDERS: readonly string[] = ["qwen", "fashn", "huggingface"];
 export { QWEN_MODEL };
 
 export function getActiveProviderId(): ProviderId {
-  const provider = process.env.AI_PROVIDER || "qwen";
+  const provider = process.env.AI_PROVIDER || "huggingface";
   if (!PROVIDERS.includes(provider))
     throw new ProviderError("The configured AI provider is unsupported.", "provider_invalid");
   return provider as ProviderId;

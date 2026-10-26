@@ -18,7 +18,12 @@ import { Badge, Button, Dialog, Empty, Notice, useToast } from "@/components/ui"
 import { useWorkspace, apiRequest, type Job, type Output } from "./context";
 import { PageHeading, SetupNotice, AiDisclosure } from "./common";
 import { dateLabel } from "@/lib/utils";
-import { operationAvailability, providerLabel } from "./provider";
+import {
+  failureExplanation,
+  jobStatusLabel,
+  operationAvailability,
+  providerLabel,
+} from "./provider";
 export async function downloadMedia(url: string, name: string) {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error("The download link expired. Refresh the page and try again.");
@@ -116,8 +121,18 @@ export function GalleryPage({ photos = false }: { photos?: boolean }) {
                 <h3>
                   {output.asset?.kind === "generated_video"
                     ? "Fashion film"
-                    : "Campaign photograph"}
+                    : output.operation === "try_on"
+                      ? "Try-on visualization"
+                      : "Campaign photograph"}
                 </h3>
+                <div className="button-row !mt-1 !mb-1">
+                  <Badge>AI-generated</Badge>
+                  {output.approved_at && !output.rejected_at ? (
+                    <Badge tone="success">Approved</Badge>
+                  ) : (
+                    <Badge tone="warning">Needs your review</Badge>
+                  )}
+                </div>
                 <small>
                   {output.created_at ? dateLabel(output.created_at) : "Private campaign asset"}
                 </small>
@@ -201,7 +216,7 @@ export function GalleryPage({ photos = false }: { photos?: boolean }) {
                         : "default"
                   }
                 >
-                  {job.status.replaceAll("_", " ")}
+                  {jobStatusLabel(job)}
                 </Badge>
                 <ArrowUpRight size={14} className="muted" />
               </Link>
@@ -212,9 +227,15 @@ export function GalleryPage({ photos = false }: { photos?: boolean }) {
   );
 }
 type DetailOutput = Output & { approved_at?: string; rejected_at?: string };
+type DetailJob = Job & {
+  error_code?: string | null;
+  garment_id?: string | null;
+  source_asset_id?: string | null;
+};
 export function GenerationDetail({ id }: { id: string }) {
   const { data, refresh } = useWorkspace();
-  const [job, setJob] = useState<Job | null>(null);
+  const [job, setJob] = useState<DetailJob | null>(null);
+  const [source, setSource] = useState<{ url: string } | null>(null);
   const [outputs, setOutputs] = useState<DetailOutput[]>([]);
   const [error, setError] = useState("");
   const [remove, setRemove] = useState(false);
@@ -229,6 +250,7 @@ export function GenerationDetail({ id }: { id: string }) {
         if (!res.ok) throw new Error(next.error);
         if (active) {
           setJob(next.job);
+          setSource(next.source || null);
           setOutputs(next.outputs || []);
           setError("");
         }
@@ -247,8 +269,25 @@ export function GenerationDetail({ id }: { id: string }) {
   }, [id]);
   const active = job && ["queued", "submitting", "processing", "retry_wait"].includes(job.status);
   const original = data.garments.find(
-    (g) => g.id === data.jobs.find((j) => j.id === id)?.garment_id,
+    (g) => g.id === (job?.garment_id ?? data.jobs.find((j) => j.id === id)?.garment_id),
   );
+  const failure = job?.status === "failed" ? failureExplanation(job.error_code) : null;
+  const sourceLabel =
+    job?.operation === "video"
+      ? "Approved start image"
+      : job?.operation === "try_on"
+        ? "Customer photograph"
+        : "Original garment";
+  // The exact image sent to the provider; the garment library image is only a fallback.
+  const sourceUrl = source?.url || (job?.operation === "photo" ? original?.imageUrl : undefined);
+  const retryHref =
+    job?.operation === "video"
+      ? `/app/videos${job.source_asset_id ? `?source=${job.source_asset_id}` : ""}`
+      : job?.operation === "try_on"
+        ? "/app/try-on"
+        : original
+          ? `/app/studio?garment=${original.id}`
+          : "/app/studio";
   async function review(outputId: string, approved: boolean) {
     try {
       const result = await apiRequest<{ output: DetailOutput }>(`/api/generations/${id}`, "PATCH", {
@@ -259,7 +298,7 @@ export function GenerationDetail({ id }: { id: string }) {
       notify(
         approved
           ? "Photograph approved. It’s ready for your next campaign."
-          : "Output marked for review. A new generation is charged separately.",
+          : "Result rejected. It won’t be offered for videos; a new generation is charged separately.",
       );
       await refresh();
     } catch (c) {
@@ -279,14 +318,18 @@ export function GenerationDetail({ id }: { id: string }) {
           job && (
             <Badge
               tone={
-                job.status === "succeeded"
+                job.status === "succeeded" && outputs.some((o) => o.approved_at && !o.rejected_at)
                   ? "success"
                   : job.status === "failed"
                     ? "error"
                     : "default"
               }
             >
-              {job.status.replaceAll("_", " ")}
+              {job.status === "succeeded" && outputs.length
+                ? outputs.some((o) => o.approved_at && !o.rejected_at)
+                  ? "Approved"
+                  : "Requires your review"
+                : jobStatusLabel(job)}
             </Badge>
           )
         }
@@ -301,10 +344,14 @@ export function GenerationDetail({ id }: { id: string }) {
             <div>
               <h2 className="text-xl">
                 {job.status === "queued"
-                  ? "Your idea is in the queue."
-                  : job.status === "retry_wait"
-                    ? "We’re checking the provider’s progress."
-                    : "A little creative work is happening."}
+                  ? "Your idea is waiting to start."
+                  : job.status === "submitting"
+                    ? "Sending your request to the provider."
+                    : job.status === "retry_wait"
+                      ? job.error_code === "provider_starting"
+                        ? "The free provider is starting up."
+                        : "We’re checking the provider’s progress."
+                      : "A little creative work is happening."}
               </h2>
               <p className="muted text-xs mt-2">
                 You can close this page. The generation continues securely on the server.
@@ -315,43 +362,54 @@ export function GenerationDetail({ id }: { id: string }) {
             <span />
           </div>
           <p className="muted text-[10px]">
-            Current state: {job.status.replaceAll("_", " ")} · This page refreshes every eight
-            seconds.
+            Current state: {jobStatusLabel(job)} · Free providers can queue work for several
+            minutes. No progress percentage is shown because the provider does not report one. This
+            page refreshes every eight seconds.
           </p>
         </div>
       )}
-      {job?.status === "failed" && (
+      {failure && (
         <div className="mb-6">
-          <Notice tone="error">
-            This generation could not be completed. Eligible reserved credits are released
-            automatically. <Link href="/app/credits">Review your credit ledger</Link>.
+          <Notice tone={failure.category === "failed" ? "error" : "warning"}>
+            <strong>{failure.title}.</strong> {failure.detail} No image or video was produced for
+            this job. <Link href="/app/credits">Review your credit ledger</Link>.
           </Notice>
+          <div className="button-row mt-4">
+            <Button href={retryHref} size="small" variant="secondary">
+              <RefreshCw size={13} />
+              Try again with a new request
+            </Button>
+          </div>
         </div>
       )}
       {outputs.length ? (
         <>
           <div className="grid md:grid-cols-2 gap-6">
-            {original?.imageUrl && (
+            {sourceUrl && (
               <div className="panel overflow-hidden">
                 <div className="p-4 flex items-center justify-between">
-                  <span className="eyebrow">Original garment</span>
-                  <Badge>Source of truth</Badge>
+                  <span className="eyebrow">{sourceLabel}</span>
+                  <Badge>Unchanged source</Badge>
                 </div>
                 <div className="asset-image !aspect-[3/4]">
-                  <img src={original.imageUrl} alt="Original garment for comparison" />
+                  <img
+                    src={sourceUrl}
+                    alt={`${sourceLabel} used for this generation, for comparison`}
+                    className="!object-contain"
+                  />
                 </div>
               </div>
             )}
             {outputs.map((output) => (
               <article className="panel overflow-hidden" key={output.id}>
                 <div className="p-4 flex items-center justify-between">
-                  <span className="eyebrow">Generated result</span>
+                  <span className="eyebrow">AI-generated result</span>
                   {output.approved_at ? (
                     <Badge tone="success">Approved</Badge>
                   ) : output.rejected_at ? (
-                    <Badge tone="warning">Needs review</Badge>
+                    <Badge tone="warning">Rejected</Badge>
                   ) : (
-                    <Badge>Awaiting your review</Badge>
+                    <Badge>Generated · awaiting your review</Badge>
                   )}
                 </div>
                 <div className="asset-image !aspect-[3/4]">
@@ -365,7 +423,11 @@ export function GenerationDetail({ id }: { id: string }) {
                         className="w-full h-full"
                       />
                     ) : (
-                      <img src={output.url} alt="AI generated result to compare with original" />
+                      <img
+                        src={output.url}
+                        alt="AI generated result to compare with original"
+                        className="!object-contain"
+                      />
                     )
                   ) : (
                     <Camera size={35} />
@@ -383,7 +445,7 @@ export function GenerationDetail({ id }: { id: string }) {
                     </Button>
                     <Button variant="ghost" size="small" onClick={() => review(output.id, false)}>
                       <X size={14} />
-                      Needs review
+                      Reject
                     </Button>
                     <Button
                       variant="ghost"
@@ -438,11 +500,7 @@ export function GenerationDetail({ id }: { id: string }) {
               <Trash2 size={13} />
               Delete generated media
             </Button>
-            <Button
-              href={original ? `/app/studio?garment=${original.id}` : "/app/studio"}
-              variant="secondary"
-              size="small"
-            >
+            <Button href={retryHref} variant="secondary" size="small">
               <RefreshCw size={13} />
               Create another version
             </Button>

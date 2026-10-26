@@ -21,8 +21,17 @@ const id = "123a87r9-4129-4bb3-be18-9c9fb5bd7fc1-u1";
 describe("provider factory compatibility", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it.each(["", "qwen"])("selects Qwen for AI_PROVIDER=%s without a hosted fallback", (value) => {
-    vi.stubEnv("AI_PROVIDER", value);
+  it("defaults an unset AI_PROVIDER to the free Hugging Face Spaces, never a paid API", () => {
+    vi.stubEnv("AI_PROVIDER", "");
+    vi.stubEnv("FASHN_API_KEY", "synthetic-key");
+    expect(activeProviderName()).toBe("huggingface");
+    expect(
+      getProviderCapabilities().every((capability) => capability.provider === "huggingface"),
+    ).toBe(true);
+  });
+
+  it("selects Qwen for AI_PROVIDER=qwen without a hosted fallback", () => {
+    vi.stubEnv("AI_PROVIDER", "qwen");
     vi.stubEnv("HF_TOKEN", "hf_synthetic-test-token");
     expect(activeProviderName()).toBe("qwen");
     expect(activeProviderLabel()).toBe("Qwen Image Edit");

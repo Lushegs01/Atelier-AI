@@ -4,6 +4,7 @@ const { admin, query, storage, responses, requestDeletion } = vi.hoisted(() => {
   const query = {
     select: vi.fn(),
     eq: vi.fn(),
+    in: vi.fn(),
     is: vi.fn(),
     single: vi.fn(),
     maybeSingle: vi.fn(),
@@ -33,6 +34,7 @@ describe("private signing authorization boundary (storage test double)", () => {
     vi.resetAllMocks();
     query.select.mockReturnValue(query);
     query.eq.mockReturnValue(query);
+    query.in.mockReturnValue(query);
     query.is.mockReturnValue(query);
     query.lt.mockReturnValue(query);
     query.order.mockReturnValue(query);
@@ -156,8 +158,31 @@ describe("private signing authorization boundary (storage test double)", () => {
     await expect(signAsset({ organizationId: "tenant-a", assetId: "source" })).resolves.toContain(
       "short-lived",
     );
-    expect(query.eq).toHaveBeenCalledWith("version", "2026-10-25-qwen-v1");
+    expect(query.in).toHaveBeenCalledWith("version", ["2026-10-25-qwen-v1"]);
     expect(query.eq).toHaveBeenCalledWith("customer_asset_id", "source");
+  });
+  it("keeps a result authorized by the superseded Hugging Face consent viewable", async () => {
+    query.single.mockResolvedValueOnce({
+      data: { storage_path: "tenant-a/source/original.png", kind: "customer_photo" },
+      error: null,
+    });
+    query.maybeSingle
+      .mockResolvedValueOnce({
+        data: {
+          id: "session",
+          provider: "huggingface",
+          expires_at: new Date(Date.now() + 60000).toISOString(),
+        },
+        error: null,
+      })
+      .mockResolvedValueOnce({ data: { id: "consent" }, error: null });
+    await expect(signAsset({ organizationId: "tenant-a", assetId: "source" })).resolves.toContain(
+      "short-lived",
+    );
+    expect(query.in).toHaveBeenCalledWith("version", [
+      "2026-10-26-huggingface-v2",
+      "2026-10-25-huggingface-v1",
+    ]);
   });
   it("records durable GPU cleanup and removes local bytes without contacting the unavailable GPU", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("GPU offline"));

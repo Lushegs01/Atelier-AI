@@ -16,13 +16,14 @@ const fixtureEnvironment = {
 
 afterEach(() => vi.unstubAllEnvs());
 describe("provider selection and pinning", () => {
-  it("defaults to Qwen without silently enabling a paid fallback", () => {
+  it("defaults to free Hugging Face Spaces without silently enabling a paid fallback", () => {
     vi.stubEnv("AI_PROVIDER", "");
     vi.stubEnv("QWEN_API_URL", "");
     vi.stubEnv("QWEN_API_KEY", "");
     vi.stubEnv("FASHN_API_KEY", "synthetic-key");
+    vi.stubEnv("HF_TOKEN", "");
     vi.stubEnv("ENABLE_PHOTO_GENERATION", "true");
-    expect(getActiveProviderId()).toBe("qwen");
+    expect(getActiveProviderId()).toBe("huggingface");
     expect(getProviderCapabilities().every((capability) => !capability.enabled)).toBe(true);
   });
   it("enables only the explicitly configured Qwen still-image capabilities", () => {

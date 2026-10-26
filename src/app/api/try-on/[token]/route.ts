@@ -17,6 +17,8 @@ import {
 import { getServerEnv } from "@/lib/env";
 import { purgeQwenPrediction } from "@/server/ai/cleanup";
 import { requireCapability } from "@/server/services/generations";
+import { assertProviderQuotaAvailable } from "@/server/services/provider-health";
+import { sourceShapeMessage } from "@/server/ai/contracts";
 import { reserveGeneration } from "@/server/billing/service";
 import { getAssetSignedUrl, uploadPrivateImage, deletePrivateAsset } from "@/server/storage/media";
 import { dispatchGeneration } from "@/workers/client";
@@ -70,7 +72,7 @@ export async function GET(request: Request, context: Context) {
     if (session.job_id) {
       const { data } = await admin
         .from("generation_jobs")
-        .select("id,status,created_at,completed_at")
+        .select("id,status,error_code,created_at,completed_at")
         .eq("id", session.job_id)
         .eq("organization_id", session.organization_id)
         .maybeSingle();
@@ -141,6 +143,7 @@ export async function POST(request: Request, context: Context) {
       const session = await getGuestSession(token, true);
       const provider = requireSessionProvider(session.provider);
       const capability = requireCapability("try_on");
+      await assertProviderQuotaAvailable(provider);
       await consumeRateLimit(`guest-submit:${hashToken(token)}`, 5, 3600);
       await consumeRateLimit(`guest-org:${session.organization_id}`, 30, 3600);
       const { form, file } = await readImageForm(request);
@@ -166,16 +169,14 @@ export async function POST(request: Request, context: Context) {
         kind: "customer_photo",
       });
       try {
-        if (
-          (asset.width || 0) < capability.minInputDimension ||
-          (asset.height || 0) < capability.minInputDimension ||
-          (provider === "qwen" && asset.byte_size > 4 * 1024 * 1024)
-        )
+        if (provider === "qwen" && asset.byte_size > 4 * 1024 * 1024)
           throw new ApiError(
             422,
-            `Choose a photograph at least ${capability.minInputDimension} pixels wide and high${provider === "qwen" ? ", up to 4 MB" : ""}.`,
+            `Choose a photograph at least ${capability.minInputDimension} pixels wide and high, up to 4 MB.`,
             "SOURCE_INCOMPATIBLE",
           );
+        const shape = sourceShapeMessage(capability, asset.width || 0, asset.height || 0);
+        if (shape) throw new ApiError(422, shape, "SOURCE_INCOMPATIBLE");
         const job = await reserveGeneration({
           organizationId: session.organization_id,
           actorId: null,

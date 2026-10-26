@@ -74,6 +74,13 @@ export function GarmentUpload({
     >
       <form className="form-stack" onSubmit={save}>
         <FileUpload onFile={chooseFile} preview={preview} />
+        <Notice>
+          For the most faithful results: photograph the whole garment, evenly lit, against a plain
+          background, with its edges clearly visible and nothing covering it. Front, mannequin,
+          hanger and flat-lay views are used for generation; back, side and detail views stay as
+          references. JPEG, PNG or WebP, at least 256 px per side. Photos are never cropped to fit a
+          model; unsuitable shapes are refused with an explanation instead.
+        </Notice>
         <Input
           label="Garment name"
           name="name"

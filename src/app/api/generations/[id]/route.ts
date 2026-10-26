@@ -15,13 +15,25 @@ export async function GET(request: Request, context: Context) {
     );
     const { data: job, error } = await tenant.client
       .from("generation_jobs")
-      .select("id,operation,status,estimated_credits,settled_credits,created_at,completed_at")
+      .select(
+        "id,operation,status,provider,provider_model,error_code,garment_id,source_asset_id,estimated_credits,settled_credits,created_at,completed_at",
+      )
       .eq("id", id)
       .eq("organization_id", tenant.organizationId)
       .maybeSingle();
     assertDatabaseResult(error);
     if (!job) throw new ApiError(404, "This generation was not found.", "NOT_FOUND");
-    if (job.status !== "succeeded") return { job, outputs: [] };
+    // The exact source sent to the provider, for side-by-side review. Signing re-checks tenant
+    // ownership, retention and customer consent; an unavailable source is simply omitted.
+    const source = job.source_asset_id
+      ? await getAssetSignedUrl({
+          assetId: job.source_asset_id,
+          organizationId: tenant.organizationId,
+        })
+          .then((url) => ({ url }))
+          .catch(() => null)
+      : null;
+    if (job.status !== "succeeded") return { job, source, outputs: [] };
     const { data: outputs } = await tenant.client
       .from("generation_outputs")
       .select("id,asset_id,approved_at,rejected_at")
@@ -29,6 +41,7 @@ export async function GET(request: Request, context: Context) {
       .eq("organization_id", tenant.organizationId);
     return {
       job,
+      source,
       outputs: await Promise.all(
         (outputs || []).map(async (output) => ({
           ...output,

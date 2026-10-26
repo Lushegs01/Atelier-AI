@@ -14,12 +14,16 @@ import { Logo } from "@/components/logo";
 import { Badge, Button, Dialog, FileUpload, Notice, Empty, useToast } from "@/components/ui";
 import { apiRequest } from "@/features/workspace/context";
 import { downloadMedia } from "@/features/workspace/gallery";
-import { providerDisclosure, type PublicProvider } from "@/features/workspace/provider";
+import {
+  failureExplanation,
+  providerDisclosure,
+  type PublicProvider,
+} from "@/features/workspace/provider";
 type SessionData = {
   session: { id: string; expiresAt: string; completed: boolean };
   brand: { name: string; color?: string };
   garment: { name: string; description?: string; imageUrl?: string };
-  job?: { id: string; status: string };
+  job?: { id: string; status: string; error_code?: string | null };
   outputs: { id: string; url: string }[];
   consentVersion: string;
   available: boolean;
@@ -202,6 +206,10 @@ export default function GuestTryOn({ token }: { token: string }) {
                 </>
               ) : data.job.status === "failed" ? (
                 <Notice tone="warning">
+                  {failureExplanation(data.job.error_code).category === "quota" ||
+                  failureExplanation(data.job.error_code).category === "unavailable"
+                    ? "The free AI service was busy or had reached its daily limit, so no image was created. "
+                    : "No image was created. "}
                   Please contact your designer for a new invitation. No successful-generation charge
                   is due for a failed job.
                 </Notice>
@@ -235,8 +243,10 @@ export default function GuestTryOn({ token }: { token: string }) {
               <span className="eyebrow mb-4">Your photograph. Your permission.</span>
               <h2 className="text-2xl mb-4">Let’s see it on you.</h2>
               <p className="muted text-xs mb-5">
-                Use a clear, fully clothed photograph of yourself. Stand naturally with your whole
-                outfit visible. Avoid photos of children or anyone who hasn’t agreed to take part.
+                Use a clear, well-lit, fully clothed photograph of yourself in portrait orientation
+                (taller than it is wide). Face the camera and stand naturally with your upper body
+                and outfit visible, ideally against a plain background. Avoid photos of children or
+                anyone who hasn’t agreed to take part.
               </p>
               <div className="mb-5">
                 <Notice>

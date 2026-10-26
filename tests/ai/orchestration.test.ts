@@ -28,6 +28,7 @@ function fakeQuery(table: string) {
   const filters: ((row: Row) => boolean)[] = [];
   let values: Row | null = null;
   let upsert: Row | null = null;
+  let remove = false;
   let count = false;
   const result = (): QueryResult => {
     const rows = (state.tables[table] ?? []).filter((row) =>
@@ -40,9 +41,16 @@ function fakeQuery(table: string) {
       }
       for (const row of rows) Object.assign(row, values);
     }
-    if (upsert && !(state.tables[table] ?? []).some((row) => row.id === upsert!.id))
+    const key = upsert && "job_id" in upsert && !("id" in upsert) ? "job_id" : "id";
+    if (upsert && !(state.tables[table] ?? []).some((row) => row[key] === upsert![key]))
       (state.tables[table] ??= []).push(upsert);
-    return { data: rows.map((row) => ({ ...row })), error: null, ...(count ? { count: 0 } : {}) };
+    if (remove)
+      state.tables[table] = (state.tables[table] ?? []).filter((row) => !rows.includes(row));
+    return {
+      data: rows.map((row) => ({ ...row })),
+      error: null,
+      ...(count ? { count: rows.length } : {}),
+    };
   };
   const query = {
     select(_columns?: string, options?: { count?: string }) {
@@ -87,6 +95,10 @@ function fakeQuery(table: string) {
     },
     upsert(value: Row) {
       upsert = value;
+      return query;
+    },
+    delete() {
+      remove = true;
       return query;
     },
     async single() {
@@ -149,6 +161,8 @@ vi.mock("@/workers/client", async (importOriginal) => ({
 }));
 
 import { ProviderError } from "@/server/ai/contracts";
+import { HF_PROCESSING_DISCLOSURE_VERSION, huggingFacePredictionId } from "@/server/ai/huggingface";
+import { MediaValidationError, ProviderOutputGoneError } from "@/server/storage/validation";
 import { dispatchGenerationRecovery } from "@/workers/client";
 import {
   pollGenerationAndTransfer,
@@ -462,44 +476,234 @@ describe("generation lifecycle integration (database, queue, media and HTTP test
     expect(job().error_code).toBe("submission_ambiguous");
   });
 
-  it("resends an expired free Hugging Face submission instead of holding it for an operator", async () => {
-    Object.assign(job(), {
-      provider: "huggingface",
-      provider_model: "Qwen/Qwen-Image-Edit",
-      status: "submitting",
-      lease_until: new Date(Date.now() - 1_000).toISOString(),
+  describe("free Hugging Face Spaces", () => {
+    const receipt = (attempt = 0) => huggingFacePredictionId("photo", jobId, attempt);
+    beforeEach(() => {
+      Object.assign(job(), {
+        provider: "huggingface",
+        provider_model: "Qwen/Qwen-Image-Edit",
+        options: { processingDisclosure: HF_PROCESSING_DISCLOSURE_VERSION },
+      });
+      provider.generateFashionImage.mockImplementation(async () => ({ id: "ignored" }));
     });
-    provider.generateFashionImage.mockResolvedValueOnce({ id: "photo-event" });
-    await expect(submitGenerationOnce(jobId, organizationId)).resolves.toEqual({
-      id: "photo-event",
-    });
-    expect(provider.generateFashionImage).toHaveBeenCalledTimes(1);
-    expect(job().error_code).toBeNull();
-    expect(state.finalizations).toBe(0);
-  });
 
-  it("passes the garment category to a Hugging Face try-on submission", async () => {
-    const sessionId = "0d7c7f4e-2f0a-4a4e-9a51-6f3b2f8e1c11";
-    state.tables.try_on_sessions[0].id = sessionId;
-    state.tables.consents[0].try_on_session_id = sessionId;
-    Object.assign(job(), {
-      provider: "huggingface",
-      provider_model: "franciszzj/Leffa",
-      operation: "try_on",
-      source_asset_id: "customer",
-      options: { tryOnSessionId: sessionId },
+    it("records the deterministic receipt before the POST and returns it with a read delay", async () => {
+      provider.generateFashionImage.mockImplementationOnce(async () => {
+        expect(job().provider_reference).toBe(receipt());
+        return { id: receipt() };
+      });
+      await expect(submitGenerationOnce(jobId, organizationId)).resolves.toEqual({
+        id: receipt(),
+        pollAfterSeconds: 15,
+      });
+      expect(provider.generateFashionImage.mock.calls[0][2]).toEqual({
+        requestId: jobId,
+        attempt: 0,
+      });
     });
-    state.tables.garments = [{ id: "garment", organization_id: organizationId, category: "dress" }];
-    provider.generateVirtualTryOn.mockResolvedValueOnce({ id: "tryon-event" });
-    await expect(submitGenerationOnce(jobId, organizationId)).resolves.toEqual({
-      id: "tryon-event",
+
+    it("claims an expired job without a receipt again, because receipts precede every POST", async () => {
+      Object.assign(job(), {
+        status: "submitting",
+        lease_until: new Date(Date.now() - 1_000).toISOString(),
+      });
+      await expect(submitGenerationOnce(jobId, organizationId)).resolves.toMatchObject({
+        id: receipt(),
+      });
+      expect(provider.generateFashionImage).toHaveBeenCalledTimes(1);
+      expect(job().error_code).toBeNull();
+      expect(state.finalizations).toBe(0);
     });
-    expect(provider.generateVirtualTryOn).toHaveBeenCalledWith(
-      "https://storage.example/short-lived-source",
-      "https://storage.example/short-lived-source",
-      expect.objectContaining({ tryOnSessionId: sessionId }),
-      { requestId: jobId, garmentCategory: "dress" },
+
+    it("reconciles an unconfirmed POST by reading its receipt and never sends it again", async () => {
+      provider.generateFashionImage.mockRejectedValueOnce(
+        new ProviderError("no response", "submission_unconfirmed", true, true),
+      );
+      await expect(submitGenerationOnce(jobId, organizationId)).resolves.toEqual({
+        id: receipt(),
+        pollAfterSeconds: 15,
+      });
+      expect(job().provider_reference).toBe(receipt());
+      // A later invocation resumes the recorded receipt rather than submitting.
+      await expect(submitGenerationOnce(jobId, organizationId)).resolves.toEqual({
+        id: receipt(),
+      });
+      provider.getGenerationStatus.mockResolvedValueOnce({
+        id: receipt(),
+        status: "failed",
+        outputs: [],
+        errorCode: "provider_result_unavailable",
+      });
+      await expect(pollGenerationAndTransfer(jobId, receipt())).resolves.toEqual({
+        state: "failed",
+      });
+      expect(provider.generateFashionImage).toHaveBeenCalledTimes(1);
+      expect(state).toMatchObject({ available: 12, reserved: 0, finalizations: 1 });
+    });
+
+    it("withdraws the receipt after a definite rejection and retries under a new one", async () => {
+      provider.generateFashionImage.mockRejectedValueOnce(
+        new ProviderError("rate limited", "provider_rate_limited", true),
+      );
+      await expect(submitGenerationOnce(jobId, organizationId)).rejects.toThrow(
+        "temporarily rejected",
+      );
+      expect(job()).toMatchObject({
+        status: "retry_wait",
+        retry_count: 1,
+        provider_reference: null,
+      });
+      await expect(submitGenerationOnce(jobId, organizationId)).resolves.toMatchObject({
+        id: receipt(1),
+      });
+      expect(provider.generateFashionImage.mock.calls[1][2]).toEqual({
+        requestId: jobId,
+        attempt: 1,
+      });
+      expect(state.finalizations).toBe(0);
+    });
+
+    it("releases credits for a non-retryable rejection without recording success", async () => {
+      provider.generateFashionImage.mockRejectedValueOnce(
+        new ProviderError("Space gone", "provider_unavailable"),
+      );
+      await expect(submitGenerationOnce(jobId, organizationId)).rejects.toThrow("released");
+      expect(job()).toMatchObject({ status: "failed", error_code: "provider_unavailable" });
+      expect(state).toMatchObject({ available: 12, reserved: 0 });
+    });
+
+    it("refuses to send a designer photograph without the processing acknowledgement", async () => {
+      job().options = {};
+      await expect(submitGenerationOnce(jobId, organizationId)).rejects.toThrow("acknowledged");
+      expect(provider.generateFashionImage).not.toHaveBeenCalled();
+      expect(job()).toMatchObject({
+        status: "failed",
+        error_code: "processing_acknowledgement_missing",
+      });
+      expect(state.available).toBe(12);
+    });
+
+    it("fails fast without contacting the Space while the shared quota is exhausted", async () => {
+      state.tables.generation_jobs.push({
+        id: "other",
+        organization_id: "other-org",
+        provider: "huggingface",
+        status: "failed",
+        error_code: "provider_quota_exceeded",
+      });
+      await expect(submitGenerationOnce(jobId, organizationId)).rejects.toThrow("quota");
+      expect(provider.generateFashionImage).not.toHaveBeenCalled();
+      // Local refusals use their own code so they never extend the cooldown they obey.
+      expect(job()).toMatchObject({ status: "failed", error_code: "provider_quota_cooldown" });
+      expect(state.available).toBe(12);
+    });
+
+    it("passes the garment category and attempt to a try-on submission", async () => {
+      const sessionId = "0d7c7f4e-2f0a-4a4e-9a51-6f3b2f8e1c11";
+      state.tables.try_on_sessions[0].id = sessionId;
+      state.tables.consents[0].try_on_session_id = sessionId;
+      Object.assign(job(), {
+        provider_model: "franciszzj/Leffa",
+        operation: "try_on",
+        created_by: null,
+        source_asset_id: "customer",
+        options: { tryOnSessionId: sessionId },
+      });
+      state.tables.garments = [
+        { id: "garment", organization_id: organizationId, category: "dress" },
+      ];
+      provider.generateVirtualTryOn.mockResolvedValueOnce({ id: "ignored" });
+      await expect(submitGenerationOnce(jobId, organizationId)).resolves.toEqual({
+        id: huggingFacePredictionId("try_on", jobId, 0),
+        pollAfterSeconds: 30,
+      });
+      expect(provider.generateVirtualTryOn).toHaveBeenCalledWith(
+        "https://storage.example/short-lived-source",
+        "https://storage.example/short-lived-source",
+        expect.objectContaining({ tryOnSessionId: sessionId }),
+        { requestId: jobId, attempt: 0, garmentCategory: "dress" },
+      );
+    });
+
+    it("keeps a completed result after a failed copy and retries only the copy", async () => {
+      Object.assign(job(), { status: "processing", provider_reference: receipt() });
+      const output =
+        "https://multimodalart-qwen-image-edit-fast.hf.space/gradio_api/file=/tmp/a.webp";
+      provider.getGenerationStatus.mockResolvedValueOnce({
+        id: receipt(),
+        status: "completed",
+        outputs: [output],
+      });
+      media.transferProviderOutput.mockRejectedValueOnce(new Error("storage outage"));
+      await expect(pollGenerationAndTransfer(jobId, receipt())).rejects.toThrow("storage outage");
+      expect(state.tables.generation_provider_results).toEqual([
+        { job_id: jobId, organization_id: organizationId, output_url: output },
+      ]);
+      await expect(pollGenerationAndTransfer(jobId, receipt())).resolves.toEqual({
+        state: "succeeded",
+      });
+      expect(provider.getGenerationStatus).toHaveBeenCalledTimes(1);
+      expect(media.transferProviderOutput.mock.calls[1][0]).toMatchObject({ url: output });
+      expect(state.tables.generation_provider_results).toEqual([]);
+      expect(state).toMatchObject({ reserved: 0, available: 0, finalizations: 1 });
+    });
+
+    it.each([
+      [new ProviderOutputGoneError(), "provider_output_expired"],
+      [
+        new MediaValidationError("The provider video uses a codec browsers cannot play."),
+        "provider_invalid_output",
+      ],
+    ])("fails without settlement when the output is unusable (%s)", async (error, code) => {
+      Object.assign(job(), { status: "processing", provider_reference: receipt() });
+      provider.getGenerationStatus.mockResolvedValueOnce({
+        id: receipt(),
+        status: "completed",
+        outputs: [
+          "https://multimodalart-qwen-image-edit-fast.hf.space/gradio_api/file=/tmp/a.webp",
+        ],
+      });
+      media.transferProviderOutput.mockRejectedValueOnce(error);
+      await expect(pollGenerationAndTransfer(jobId, receipt())).resolves.toEqual({
+        state: "failed",
+      });
+      expect(job()).toMatchObject({ status: "failed", error_code: code });
+      expect(state).toMatchObject({ available: 12, reserved: 0, finalizations: 1 });
+    });
+
+    it.each(["provider_quota_exceeded", "provider_busy", "provider_timeout"])(
+      "releases credits when the Space reports %s",
+      async (code) => {
+        Object.assign(job(), { status: "processing", provider_reference: receipt() });
+        provider.getGenerationStatus.mockResolvedValueOnce({
+          id: receipt(),
+          status: "failed",
+          outputs: [],
+          errorCode: code,
+        });
+        await expect(pollGenerationAndTransfer(jobId, receipt())).resolves.toEqual({
+          state: "failed",
+        });
+        expect(media.transferProviderOutput).not.toHaveBeenCalled();
+        expect(job()).toMatchObject({ status: "failed", error_code: code });
+        expect(state.available).toBe(12);
+      },
     );
+
+    it("recovers a known receipt after worker exhaustion instead of refunding or resubmitting", async () => {
+      Object.assign(job(), { status: "processing", provider_reference: receipt() });
+      await expect(reconcileExhaustedGeneration(jobId)).resolves.toBe("recovered");
+      expect(dispatchGenerationRecovery).toHaveBeenCalledWith(jobId, organizationId);
+      expect(provider.generateFashionImage).not.toHaveBeenCalled();
+      expect(state.finalizations).toBe(0);
+    });
+
+    it("releases a job that exhausted its retries before any receipt was recorded", async () => {
+      Object.assign(job(), { status: "retry_wait", error_code: "provider_starting" });
+      await expect(reconcileExhaustedGeneration(jobId)).resolves.toBe("failed");
+      expect(job()).toMatchObject({ status: "failed", error_code: "provider_not_submitted" });
+      expect(provider.generateFashionImage).not.toHaveBeenCalled();
+    });
   });
 
   it("retries a definite pre-acceptance rejection and keeps only one reservation", async () => {

@@ -6,6 +6,8 @@ Local code and tests are not sufficient for a public launch. Check each item wit
 - [ ] Hosted Supabase signup, email confirmation, reset, refresh, logout, onboarding and resumable organization creation verified.
 - [ ] Two organizations/all roles/unauthenticated customer cannot cross-read, write, delete, sign or download records/media; no browser role escalation or admin access.
 - [ ] Garment upload/front/back/detail/library/search/archive/deletion and hosted ownership checks verified with synthetic authorized images.
+- [ ] Free Hugging Face Spaces (default): `npm run smoke:hf -- all` passed with a read-only token from a free account; photo, try-on and video outputs compared with their sources; quota exhaustion and `provider_busy` messages observed; a staged run through Supabase, Inngest and private storage settled exactly one charge per successful job and released credits for failures.
+- [ ] Space licences, terms and data handling reviewed; private Space duplicates configured before real customer photographs.
 - [ ] Real operator-hosted Qwen photo editing verified on the selected CUDA host, with garment comparison/approval, restart/idempotency, output transfer, measured compute cost and private cleanup. Unit/CPU service tests are not GPU evidence.
 - [ ] Qwen customer visualization separately assessed as experimental image editing; actual provider-specific consent/retention verified. Disable it if fidelity or privacy is unacceptable. Qwen video remains unavailable.
 - [ ] If optional FASHN is selected, verify only its enabled photo/try-on/video models, lifecycle flags, private transfer, cost and video playback. Existing jobs/sessions stay pinned across provider changes.

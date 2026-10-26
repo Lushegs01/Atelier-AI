@@ -7,6 +7,14 @@ export class MediaValidationError extends Error {
   }
 }
 
+/** The provider no longer serves the output (expired, deleted or its host restarted). */
+export class ProviderOutputGoneError extends MediaValidationError {
+  constructor() {
+    super("The provider output is no longer available.");
+    this.name = "ProviderOutputGoneError";
+  }
+}
+
 export interface ValidatedImage {
   buffer: Buffer;
   mimeType: "image/jpeg" | "image/png";
@@ -170,4 +178,73 @@ export function validateMp4Container(buffer: Buffer): void {
   }
   if (!hasMovie || !hasMedia)
     throw new MediaValidationError("The MP4 container lacks movie or media data.");
+}
+
+interface Box {
+  type: string;
+  start: number;
+  end: number;
+}
+
+function childBoxes(buffer: Buffer, start: number, end: number): Box[] {
+  const boxes: Box[] = [];
+  let offset = start;
+  while (offset + 8 <= end && boxes.length < 10_000) {
+    let size = buffer.readUInt32BE(offset);
+    const type = buffer.toString("ascii", offset + 4, offset + 8);
+    let header = 8;
+    if (size === 1) {
+      if (offset + 16 > end) break;
+      size = Number(buffer.readBigUInt64BE(offset + 8));
+      header = 16;
+    } else if (size === 0) size = end - offset;
+    if (size < header || offset + size > end) break;
+    boxes.push({ type, start: offset + header, end: offset + size });
+    offset += size;
+  }
+  return boxes;
+}
+
+const child = (buffer: Buffer, box: Box | undefined, type: string) =>
+  box ? childBoxes(buffer, box.start, box.end).find((item) => item.type === type) : undefined;
+
+/** Codecs every current desktop and mobile browser plays from an MP4 container. */
+const PLAYABLE_CODECS = ["avc1", "avc3", "av01", "vp09"];
+
+/**
+ * Validates the container, then requires a video track with a browser-playable codec and a
+ * positive duration. This inspects metadata; it does not decode frames.
+ */
+export function validatePlayableMp4(buffer: Buffer): { codec: string; durationSeconds: number } {
+  validateMp4Container(buffer);
+  const moov = childBoxes(buffer, 0, buffer.length).find((box) => box.type === "moov");
+  for (const trak of childBoxes(buffer, moov!.start, moov!.end).filter((b) => b.type === "trak")) {
+    const mdia = child(buffer, trak, "mdia");
+    const hdlr = child(buffer, mdia, "hdlr");
+    if (!hdlr || hdlr.end - hdlr.start < 12) continue;
+    if (buffer.toString("ascii", hdlr.start + 8, hdlr.start + 12) !== "vide") continue;
+    const mdhd = child(buffer, mdia, "mdhd");
+    const stsd = child(buffer, child(buffer, child(buffer, mdia, "minf"), "stbl"), "stsd");
+    if (!mdhd || !stsd || stsd.end - stsd.start < 16) continue;
+    const version = buffer[mdhd.start];
+    const fields = mdhd.start + 4;
+    let timescale: number;
+    let duration: number;
+    if (version === 1) {
+      if (mdhd.end - fields < 28) continue;
+      timescale = buffer.readUInt32BE(fields + 16);
+      duration = Number(buffer.readBigUInt64BE(fields + 20));
+    } else {
+      if (mdhd.end - fields < 16) continue;
+      timescale = buffer.readUInt32BE(fields + 8);
+      duration = buffer.readUInt32BE(fields + 12);
+    }
+    const codec = buffer.toString("ascii", stsd.start + 12, stsd.start + 16);
+    if (!PLAYABLE_CODECS.includes(codec))
+      throw new MediaValidationError("The provider video uses a codec browsers cannot play.");
+    if (!timescale || !duration)
+      throw new MediaValidationError("The provider video has no playable duration.");
+    return { codec, durationSeconds: duration / timescale };
+  }
+  throw new MediaValidationError("The provider did not return a video track.");
 }
