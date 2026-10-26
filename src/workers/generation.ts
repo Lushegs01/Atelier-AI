@@ -72,13 +72,18 @@ async function updateJob(id: string, values: Record<string, unknown>): Promise<v
   if (error) throw new Error("Generation state could not be persisted.");
 }
 
-async function finishJob(id: string, success: boolean, code?: string): Promise<string> {
+async function finishJob(
+  id: string,
+  success: boolean,
+  code?: string,
+  detail?: string,
+): Promise<string> {
   const { data, error } = await getAdminClient().rpc("finalize_generation", {
     p_job_id: id,
     p_success: success,
     p_error_code: code ?? null,
     p_error_message: code
-      ? "Generation could not complete. Your reserved credits have been released."
+      ? `Generation could not complete. Your reserved credits have been released.${detail ? ` Provider reported: ${detail}` : ""}`
       : null,
   });
   if (error) throw new Error("Generation accounting could not be reconciled.");
@@ -415,7 +420,12 @@ export async function pollGenerationAndTransfer(
   if (prediction.creditsUsed !== undefined)
     await updateJob(job.id, { provider_credits_milli: prediction.creditsUsed * 1000 });
   if (prediction.status === "failed") {
-    const state = await finishJob(job.id, false, prediction.errorCode ?? "provider_failed");
+    const state = await finishJob(
+      job.id,
+      false,
+      prediction.errorCode ?? "provider_failed",
+      prediction.errorDetail,
+    );
     return { state };
   }
   if (prediction.status !== "completed") {

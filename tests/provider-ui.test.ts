@@ -60,7 +60,12 @@ describe("generation state wording", () => {
   it("distinguishes quota exhaustion, outages, timeouts and unusable output", () => {
     expect(failureExplanation("provider_quota_exceeded")).toMatchObject({ category: "quota" });
     expect(failureExplanation("provider_quota_cooldown")).toMatchObject({ category: "quota" });
-    for (const code of ["provider_busy", "provider_starting", "provider_http_503"])
+    for (const code of [
+      "provider_busy",
+      "provider_starting",
+      "provider_http_503",
+      "provider_gpu_error",
+    ])
       expect(failureExplanation(code).category).toBe("unavailable");
     for (const code of ["provider_timeout", "provider_result_unavailable"])
       expect(failureExplanation(code).category).toBe("timeout");

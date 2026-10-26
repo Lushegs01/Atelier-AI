@@ -70,7 +70,9 @@ async function run(operation: GenerationOperation, outputDir: string) {
   await sleep(HF_FIRST_READ_DELAY_SECONDS[operation] * 1000);
   const prediction = await provider.getGenerationStatus(id);
   if (prediction.status !== "completed")
-    throw new Error(`[${operation}] not completed: ${prediction.errorCode ?? prediction.status}`);
+    throw new Error(
+      `[${operation}] not completed: ${prediction.errorCode ?? prediction.status}${prediction.errorDetail ? ` (${prediction.errorDetail})` : ""}`,
+    );
   const transfer = huggingFaceOutputRequest(prediction.outputs[0]);
   const response = await fetch(transfer.url, {
     headers: transfer.headers,
