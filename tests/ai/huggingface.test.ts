@@ -9,6 +9,7 @@ import {
   huggingFaceResultWaitMs,
   huggingFaceSpaceHost,
   spaceErrorCode,
+  spaceErrorDetail,
 } from "@/server/ai/huggingface";
 import {
   imageOptionsSchema,
@@ -443,6 +444,40 @@ describe("Hugging Face Spaces adapter (HTTP test doubles; no live AI calls)", ()
     });
   });
 
+  it("reports a GPU worker crash with its own code and a short sanitized explanation", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(
+      queue({
+        msg: "process_completed",
+        success: false,
+        title: "ZeroGPU worker error",
+        output: { error: "GPU task aborted" },
+      }),
+    );
+    await expect(
+      new HuggingFaceProvider("hf_test", request).getGenerationStatus(`photo-${session}`),
+    ).resolves.toEqual({
+      id: `photo-${session}`,
+      status: "failed",
+      outputs: [],
+      errorCode: "provider_gpu_error",
+      errorDetail: "ZeroGPU worker error: GPU task aborted",
+    });
+  });
+
+  it("keeps only a bounded, markup- and link-free provider explanation", () => {
+    expect(
+      spaceErrorDetail(
+        "ZeroGPU quota exceeded",
+        'You have exceeded your free ZeroGPU quota (120s requested vs. 30s left). <a href="https://huggingface.co/subscribe/pro">Subscribe</a> https://huggingface.co/settings/tokens',
+      ),
+    ).toBe(
+      "ZeroGPU quota exceeded: You have exceeded your free ZeroGPU quota (120s requested vs. 30s left). Subscribe [link]",
+    );
+    expect(spaceErrorDetail("Error", null)).toBe("Error");
+    expect(spaceErrorDetail(null, "x".repeat(500))).toHaveLength(160);
+    expect(spaceErrorDetail(undefined, "  ")).toBeNull();
+  });
+
   it("maps ZeroGPU error titles to stable codes without keeping upstream text", () => {
     expect(spaceErrorCode("ZeroGPU quota exceeded", "anything")).toBe("provider_quota_exceeded");
     expect(spaceErrorCode("Error", "You have exceeded your ZeroGPU runs limit.")).toBe(
@@ -453,6 +488,7 @@ describe("Hugging Face Spaces adapter (HTTP test doubles; no live AI calls)", ()
     );
     expect(spaceErrorCode("ZeroGPU client error", "No GPU was available")).toBe("provider_busy");
     expect(spaceErrorCode("ZeroGPU illegal duration", "")).toBe("provider_rejected");
+    expect(spaceErrorCode("ZeroGPU worker error", "OutOfMemoryError")).toBe("provider_gpu_error");
     expect(spaceErrorCode(undefined, undefined)).toBe("provider_failed");
   });
 

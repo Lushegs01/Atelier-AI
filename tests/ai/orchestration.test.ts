@@ -135,6 +135,7 @@ vi.mock("@/lib/supabase/admin", () => ({
         if (!args.p_success) state.available += 12;
         job.status = args.p_success ? "succeeded" : "failed";
         job.error_code = args.p_error_code;
+        job.error_message = args.p_error_message;
         return { data: job, error: null };
       }
       throw new Error(`Unexpected RPC ${name}`);
@@ -669,6 +670,28 @@ describe("generation lifecycle integration (database, queue, media and HTTP test
       });
       expect(job()).toMatchObject({ status: "failed", error_code: code });
       expect(state).toMatchObject({ available: 12, reserved: 0, finalizations: 1 });
+    });
+
+    it("records the provider's sanitized explanation on a failed job", async () => {
+      Object.assign(job(), { status: "processing", provider_reference: receipt() });
+      provider.getGenerationStatus.mockResolvedValueOnce({
+        id: receipt(),
+        status: "failed",
+        outputs: [],
+        errorCode: "provider_gpu_error",
+        errorDetail: "ZeroGPU worker error: GPU task aborted",
+      });
+      await expect(pollGenerationAndTransfer(jobId, receipt())).resolves.toEqual({
+        state: "failed",
+      });
+      expect(job()).toMatchObject({
+        status: "failed",
+        error_code: "provider_gpu_error",
+        error_message: expect.stringContaining(
+          "Provider reported: ZeroGPU worker error: GPU task aborted",
+        ),
+      });
+      expect(state.available).toBe(12);
     });
 
     it.each(["provider_quota_exceeded", "provider_busy", "provider_timeout"])(

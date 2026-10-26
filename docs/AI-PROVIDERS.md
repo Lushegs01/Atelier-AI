@@ -71,14 +71,16 @@ Public Spaces run code chosen by their owners on Hugging Face infrastructure and
 
 ### Diagnosing errors without exposing secrets
 
-| Job `error_code`                                             | Meaning                                                     | What to do                                                                |
-| ------------------------------------------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `provider_quota_exceeded`                                    | ZeroGPU daily quota used up                                 | Wait for the reset; check the account's usage page                        |
-| `provider_busy`, `provider_unavailable`, `provider_starting` | Space busy, sleeping, paused or full                        | Check the Space page; retry later                                         |
-| `provider_auth_failed`                                       | Token rejected                                              | Recreate the read token; check it is set on the server                    |
-| `provider_endpoint_missing`                                  | The Space no longer offers the expected API                 | Re-verify the contract (`/gradio_api/info`) before changing the adapter   |
-| `provider_timeout`, `provider_result_unavailable`            | No result within the read window, or the Space lost the job | Retry; lower load or raise `HF_RESULT_WAIT_SECONDS` within the host limit |
-| `provider_invalid_output`, `provider_output_expired`         | Output untrusted, undecodable, unplayable or gone           | Retry; inspect with the live smoke test                                   |
+| Job `error_code`                                             | Meaning                                                                     | What to do                                                                                                           |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `provider_quota_exceeded`                                    | ZeroGPU daily quota used up                                                 | Wait for the reset; check the account's usage page                                                                   |
+| `provider_busy`, `provider_unavailable`, `provider_starting` | Space busy, sleeping, paused or full                                        | Check the Space page; retry later                                                                                    |
+| `provider_gpu_error`                                         | The Space's shared GPU aborted or crashed the task (`ZeroGPU worker error`) | Retry; if it repeats, try a smaller source photo. The job's `error_message` holds the Space's short explanation      |
+| `provider_failed`                                            | The Space's own code raised an error                                        | See the job's `error_message` ("Provider reported: …"); Gradio hides unexpected exception text, leaving only "Error" |
+| `provider_auth_failed`                                       | Token rejected                                                              | Recreate the read token; check it is set on the server                                                               |
+| `provider_endpoint_missing`                                  | The Space no longer offers the expected API                                 | Re-verify the contract (`/gradio_api/info`) before changing the adapter                                              |
+| `provider_timeout`, `provider_result_unavailable`            | No result within the read window, or the Space lost the job                 | Retry; lower load or raise `HF_RESULT_WAIT_SECONDS` within the host limit                                            |
+| `provider_invalid_output`, `provider_output_expired`         | Output untrusted, undecodable, unplayable or gone                           | Retry; inspect with the live smoke test                                                                              |
 
 Inspect a Space's contract without credentials or GPU use: `curl https://<space-host>.hf.space/gradio_api/info` and `curl https://huggingface.co/api/spaces/<owner>/<name>/runtime`.
 

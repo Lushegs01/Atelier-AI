@@ -55,6 +55,8 @@ export interface Prediction {
   outputs: string[];
   creditsUsed?: number;
   errorCode?: string;
+  /** Short, sanitized provider explanation for operators; never contains URLs or markup. */
+  errorDetail?: string;
 }
 
 export interface ProviderCapability {

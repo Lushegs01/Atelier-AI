@@ -229,6 +229,7 @@ export function GalleryPage({ photos = false }: { photos?: boolean }) {
 type DetailOutput = Output & { approved_at?: string; rejected_at?: string };
 type DetailJob = Job & {
   error_code?: string | null;
+  error_message?: string | null;
   garment_id?: string | null;
   source_asset_id?: string | null;
 };
@@ -373,6 +374,14 @@ export function GenerationDetail({ id }: { id: string }) {
           <Notice tone={failure.category === "failed" ? "error" : "warning"}>
             <strong>{failure.title}.</strong> {failure.detail} No image or video was produced for
             this job. <Link href="/app/credits">Review your credit ledger</Link>.
+            {job?.error_message?.includes("Provider reported:") && (
+              <span className="block mt-2">
+                {job.error_message.slice(job.error_message.indexOf("Provider reported:"))}
+              </span>
+            )}
+            {job?.error_code && (
+              <span className="block mt-2 text-[10px]">Reference: {job.error_code}</span>
+            )}
           </Notice>
           <div className="button-row mt-4">
             <Button href={retryHref} size="small" variant="secondary">

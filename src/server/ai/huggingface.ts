@@ -429,11 +429,12 @@ export class HuggingFaceProvider implements FashionProvider {
     if (!match) throw new ProviderError("Invalid prediction identifier.", "invalid_prediction");
     const operation = OPERATION_BY_PREFIX[match[1]];
     const base = this.spaceUrl(operation);
-    const failed = (errorCode: string): Prediction => ({
+    const failed = (errorCode: string, detail?: string | null): Prediction => ({
       id,
       status: "failed",
       outputs: [],
       errorCode,
+      ...(detail ? { errorDetail: detail } : {}),
     });
     let response: Response;
     try {
@@ -476,9 +477,16 @@ export class HuggingFaceProvider implements FashionProvider {
     }
     if (!final) return failed("provider_connection_lost");
     if (final.msg === "unexpected_error")
-      return failed(final.session_not_found ? "provider_result_unavailable" : "provider_failed");
+      return failed(
+        final.session_not_found ? "provider_result_unavailable" : "provider_failed",
+        spaceErrorDetail(null, final.message),
+      );
     if (final.msg === "close_stream") return failed("provider_result_unavailable");
-    if (!final.success) return failed(spaceErrorCode(final.title, final.output?.error));
+    if (!final.success)
+      return failed(
+        spaceErrorCode(final.title, final.output?.error),
+        spaceErrorDetail(final.title, final.output?.error),
+      );
     const output = outputUrl(final.output?.data, base);
     if (!output) return failed("provider_invalid_output");
     return { id, status: "completed", outputs: [output] };
@@ -516,6 +524,7 @@ interface QueueMessage {
   success?: boolean;
   title?: string | null;
   session_not_found?: boolean;
+  message?: unknown;
   output?: { data?: unknown; error?: unknown };
 }
 
@@ -565,14 +574,37 @@ async function readFinalMessage(response: Response): Promise<QueueMessage | null
   }
 }
 
-/** ZeroGPU raises titled errors; only a stable code is kept, never the upstream text. */
+/** ZeroGPU raises titled errors; the stable code drives behaviour and user-facing wording. */
 export function spaceErrorCode(title: unknown, message: unknown): string {
   const text = `${typeof title === "string" ? title : ""} ${typeof message === "string" ? message : ""}`;
   if (/quota exceeded|pending credits|runs limit|GPU limit|exceeded your .*quota/i.test(text))
     return "provider_quota_exceeded";
   if (/queue timeout|No GPU was available|ZeroGPU client error/i.test(text)) return "provider_busy";
   if (/illegal duration/i.test(text)) return "provider_rejected";
+  // The GPU worker crashed or aborted the task (for example out of memory); often transient.
+  if (/ZeroGPU worker error|GPU task aborted/i.test(text)) return "provider_gpu_error";
   return "provider_failed";
+}
+
+/**
+ * A short operator-facing summary of a Space error, e.g. "ZeroGPU worker error: GPU task
+ * aborted". Markup and URLs are removed and it is bounded, so it can be stored on the job.
+ * Gradio hides the text of unexpected exceptions, which then leaves only the title.
+ */
+export function spaceErrorDetail(title: unknown, message: unknown): string | null {
+  const clean = (value: unknown) =>
+    typeof value === "string"
+      ? value
+          .replace(/<[^>]*>/g, " ")
+          .replace(/\b(?:https?:\/\/|www\.)\S+/gi, "[link]")
+          .replace(/[^\p{L}\p{N}\p{P}\p{Zs}]/gu, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+      : "";
+  const head = clean(title);
+  const body = clean(message);
+  const text = head && body ? `${head}: ${body}` : head || body;
+  return text ? text.slice(0, 160) : null;
 }
 
 /** The first output component holds the image or video; it must be served by the same Space. */

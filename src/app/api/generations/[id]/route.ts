@@ -16,7 +16,7 @@ export async function GET(request: Request, context: Context) {
     const { data: job, error } = await tenant.client
       .from("generation_jobs")
       .select(
-        "id,operation,status,provider,provider_model,error_code,garment_id,source_asset_id,estimated_credits,settled_credits,created_at,completed_at",
+        "id,operation,status,provider,provider_model,error_code,error_message,garment_id,source_asset_id,estimated_credits,settled_credits,created_at,completed_at",
       )
       .eq("id", id)
       .eq("organization_id", tenant.organizationId)

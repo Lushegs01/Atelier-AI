@@ -80,6 +80,13 @@ export function failureExplanation(code?: string | null): {
       detail:
         "The free provider’s daily GPU quota was used up, so nothing was generated. Your reserved credits were released. Try again later; the quota recovers over the day.",
     };
+  if (value === "provider_gpu_error")
+    return {
+      category: "unavailable",
+      title: "The free GPU stopped with an error",
+      detail:
+        "The provider’s shared GPU aborted this job, which is often temporary. Nothing was produced and your reserved credits were released. Please try again; if it keeps happening, try a smaller or simpler source photo.",
+    };
   if (
     /^(provider_(busy|unavailable|starting|rate_limited|capacity_timeout|not_submitted|http_5\d\d|endpoint_missing|auth_failed)|status_unavailable|provider_circuit_open)$/.test(
       value,
