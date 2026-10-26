@@ -67,6 +67,12 @@ export function safeBillingDatabaseError(message: string): Error {
     return new BillingError(503, "Generation pricing is awaiting review.", "PRICING_DISABLED");
   if (message.includes("Try-on session unavailable"))
     return new BillingError(410, "This try-on link is no longer available.", "SESSION_UNAVAILABLE");
+  if (message.includes("Third-party processing acknowledgement required"))
+    return new BillingError(
+      422,
+      "Review and accept the third-party processing notice before generating.",
+      "PROCESSING_ACKNOWLEDGEMENT_REQUIRED",
+    );
   if (message.includes("Consent required"))
     return new BillingError(
       422,
@@ -87,8 +93,11 @@ export function safeBillingDatabaseError(message: string): Error {
     );
   return new Error("The billing transaction could not be completed.");
 }
+const processingDisclosure = z.string().max(64).optional();
 const imageOptionsSchema = z
   .object({
+    direction: z.enum(["faithful", "editorial", "lifestyle", "product"]).optional(),
+    processingDisclosure,
     scene: z.string().max(300).optional(),
     model: z.string().max(200).optional(),
     pose: z.string().max(200).optional(),
@@ -109,7 +118,10 @@ const videoOptionsSchema = z
     duration: z.union([z.literal(5), z.literal(10)]).default(5),
     resolution: z.enum(["480p", "720p", "1080p"]).default("1080p"),
     motion: z.string().max(200).optional(),
+    motionPreset: z.enum(["subtle", "fabric", "camera"]).optional(),
+    seed: z.number().int().min(0).max(4_294_967_295).optional(),
     prompt: z.string().max(200).optional(),
+    processingDisclosure,
   })
   .strict();
 

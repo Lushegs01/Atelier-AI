@@ -225,6 +225,7 @@ export async function getWorkspace(organizationId?: string, page = 1) {
     jobs: ((jobs || []) as Record<string, unknown>[]).map((job) => ({
       id: job.id,
       garment_id: job.garment_id,
+      source_asset_id: job.source_asset_id,
       operation: job.operation,
       provider: job.provider,
       provider_model: job.provider_model,
@@ -233,6 +234,7 @@ export async function getWorkspace(organizationId?: string, page = 1) {
       settled_credits: job.settled_credits,
       created_at: job.created_at,
       updated_at: job.updated_at,
+      error_code: ["failed", "retry_wait"].includes(String(job.status)) ? job.error_code : null,
       error:
         job.status === "failed"
           ? "This generation failed. Any eligible reservation has been released."

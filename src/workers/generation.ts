@@ -10,17 +10,25 @@ import {
 } from "@/server/ai/registry";
 import {
   GenerationOperation,
+  type Prediction,
   ProviderError,
   imageOptionsSchema,
   tryOnOptionsSchema,
   videoOptionsSchema,
 } from "@/server/ai/contracts";
 import {
+  HF_FIRST_READ_DELAY_SECONDS,
+  HF_PROCESSING_DISCLOSURE_VERSION,
+  huggingFacePredictionId,
+} from "@/server/ai/huggingface";
+import {
   deletePrivateAsset,
   deterministicOutputId,
   downloadAssetForProvider,
   transferProviderOutput,
 } from "@/server/storage/media";
+import { MediaValidationError, ProviderOutputGoneError } from "@/server/storage/validation";
+import { huggingFaceQuotaCooldownActive } from "@/server/services/provider-health";
 import {
   inngest,
   generationRequested,
@@ -74,7 +82,38 @@ async function finishJob(id: string, success: boolean, code?: string): Promise<s
       : null,
   });
   if (error) throw new Error("Generation accounting could not be reconciled.");
+  // A finished job no longer needs the provider's temporary output location. Best effort only:
+  // the row is service-only and accounting is already final.
+  try {
+    await getAdminClient().from("generation_provider_results").delete().eq("job_id", id);
+  } catch {
+    // Ignored; a leftover row grants no access and is never read for a terminal job.
+  }
   return String(data.status);
+}
+
+/** A completed Space result is persisted so a failed copy never needs another inference. */
+async function loadProviderResult(job: Job): Promise<string | null> {
+  const { data, error } = await getAdminClient()
+    .from("generation_provider_results")
+    .select("output_url")
+    .eq("job_id", job.id)
+    .eq("organization_id", job.organization_id)
+    .maybeSingle();
+  if (error) throw new Error("The provider result could not be loaded.");
+  return typeof data?.output_url === "string" ? data.output_url : null;
+}
+
+async function saveProviderResult(job: Job, url: string): Promise<void> {
+  const { error } = await getAdminClient().from("generation_provider_results").upsert(
+    {
+      job_id: job.id,
+      organization_id: job.organization_id,
+      output_url: url,
+    },
+    { onConflict: "job_id", ignoreDuplicates: true },
+  );
+  if (error) throw new Error("The provider result could not be recorded.");
 }
 
 async function checkTryOnConsent(job: Job): Promise<void> {
@@ -152,7 +191,12 @@ async function garmentCategory(job: Job): Promise<string | undefined> {
 export async function submitGenerationOnce(
   jobId: string,
   organizationId: string,
-): Promise<{ id: string | null; terminal?: boolean; waiting?: boolean }> {
+): Promise<{
+  id: string | null;
+  terminal?: boolean;
+  waiting?: boolean;
+  pollAfterSeconds?: number;
+}> {
   const job = await loadJob(jobId, organizationId);
   const decision = submissionDecision(job);
   if (decision === "terminal") return { id: job.provider_reference, terminal: true };
@@ -186,7 +230,8 @@ export async function submitGenerationOnce(
         }
       }
     } else if (job.provider === "huggingface") {
-      // A duplicate free Space job only spends GPU quota, so an unknown submission is resent.
+      // Hugging Face receipts are recorded before the POST, so a job without one never reached
+      // the Space and can be claimed again without duplicating inference.
       await updateJob(job.id, {
         status: "retry_wait",
         error_code: null,
@@ -207,12 +252,31 @@ export async function submitGenerationOnce(
   if (decision === "wait") return { id: null, waiting: true };
   assertCapabilityEnabled(job.operation, job.provider);
   await checkTryOnConsent(job);
+  if (job.provider === "huggingface") {
+    if (job.created_by && job.options.processingDisclosure !== HF_PROCESSING_DISCLOSURE_VERSION) {
+      await finishJob(job.id, false, "processing_acknowledgement_missing");
+      throw new NonRetriableError("Third-party processing was not acknowledged.");
+    }
+    // Every job shares one token's daily GPU quota; do not send work that cannot run. A distinct
+    // code keeps these local refusals from extending the cooldown, which counts Space refusals only.
+    if (await huggingFaceQuotaCooldownActive()) {
+      await finishJob(job.id, false, "provider_quota_cooldown");
+      throw new NonRetriableError("The free provider quota is exhausted; credits were released.");
+    }
+  }
   const admin = getAdminClient();
   // A persistent rolling circuit breaker avoids a provider outage draining queued work.
   const { count, error: circuitError } = await admin
     .from("generation_jobs")
     .select("id", { count: "exact", head: true })
-    .like("error_code", job.provider === "qwen" ? "qwen_http_5%" : "provider_http_5%")
+    .like(
+      "error_code",
+      job.provider === "qwen"
+        ? "qwen_http_5%"
+        : job.provider === "huggingface"
+          ? "provider_unavailable"
+          : "provider_http_5%",
+    )
     .eq("provider", job.provider)
     .gte("updated_at", new Date(Date.now() - 120_000).toISOString());
   if (circuitError) throw new Error("Provider health could not be checked.");
@@ -223,42 +287,69 @@ export async function submitGenerationOnce(
   });
   if (claimError) throw new Error("The generation could not be claimed.");
   if (!claimed || !Array.isArray(claimed) || !claimed.length) return { id: null, waiting: true };
+  const receipt =
+    job.provider === "huggingface"
+      ? huggingFacePredictionId(job.operation, job.id, job.retry_count)
+      : null;
+  const accepted = (result: { id: string }) =>
+    receipt
+      ? { id: receipt, pollAfterSeconds: HF_FIRST_READ_DELAY_SECONDS[job.operation] }
+      : result;
+  const context = { requestId: job.id, ...(receipt ? { attempt: job.retry_count } : {}) };
   try {
     const provider = createProviderForJob(job);
     if (job.operation === "photo") {
       const source = await resolveGarmentSource(job);
-      return await provider.generateFashionImage(source, imageOptionsSchema.parse(job.options), {
-        requestId: job.id,
-      });
+      // The deterministic receipt is durable before the request leaves, so any outcome can be read.
+      if (receipt) await updateJob(job.id, { provider_reference: receipt });
+      return accepted(
+        await provider.generateFashionImage(source, imageOptionsSchema.parse(job.options), context),
+      );
     }
     if (job.operation === "video") {
       if (!job.source_asset_id) throw new NonRetriableError("Select an image to animate.");
+      const capability = getProviderCapabilities(job.provider).find(
+        (item) => item.operation === "video",
+      );
       const source = await downloadAssetForProvider({
         organizationId: job.organization_id,
         assetId: job.source_asset_id,
-        minDimension: 301,
+        minDimension: capability?.minInputDimension ?? 301,
+        minAspectRatio: capability?.minAspectRatio,
+        maxAspectRatio: capability?.maxAspectRatio,
       });
-      return await provider.generateFashionVideo(source, videoOptionsSchema.parse(job.options), {
-        requestId: job.id,
-      });
+      if (receipt) await updateJob(job.id, { provider_reference: receipt });
+      return accepted(
+        await provider.generateFashionVideo(source, videoOptionsSchema.parse(job.options), context),
+      );
     }
     if (!job.source_asset_id)
       throw new NonRetriableError("A consented customer photograph is required.");
     const product = await resolveGarmentSource(job);
+    const capability = getProviderCapabilities(job.provider).find(
+      (item) => item.operation === "try_on",
+    );
     const person = await downloadAssetForProvider({
       organizationId: job.organization_id,
       assetId: job.source_asset_id,
+      minAspectRatio: capability?.minAspectRatio,
+      maxAspectRatio: capability?.maxAspectRatio,
     });
-    return await provider.generateVirtualTryOn(
-      product,
-      person,
-      tryOnOptionsSchema.parse(job.options),
-      {
-        requestId: job.id,
-        ...(job.provider === "huggingface" ? { garmentCategory: await garmentCategory(job) } : {}),
-      },
+    const category = job.provider === "huggingface" ? await garmentCategory(job) : undefined;
+    if (receipt) await updateJob(job.id, { provider_reference: receipt });
+    return accepted(
+      await provider.generateVirtualTryOn(product, person, tryOnOptionsSchema.parse(job.options), {
+        ...context,
+        ...(job.provider === "huggingface" ? { garmentCategory: category } : {}),
+      }),
     );
   } catch (error) {
+    if (receipt) {
+      // An unconfirmed POST is reconciled by reading the receipt; it is never sent again.
+      if (error instanceof ProviderError && error.ambiguous) return accepted({ id: receipt });
+      // Anything else was rejected before acceptance, so the unused receipt is withdrawn.
+      await updateJob(job.id, { provider_reference: null });
+    }
     if (error instanceof ProviderError && error.ambiguous) {
       await updateJob(job.id, {
         status: "retry_wait",
@@ -315,7 +406,12 @@ export async function pollGenerationAndTransfer(
   const job = await loadJob(jobId);
   if (["succeeded", "failed", "cancelled"].includes(job.status)) return { state: job.status };
   await checkTryOnConsent(job);
-  const prediction = await createProviderForJob(job).getGenerationStatus(reference);
+  const persisted = job.provider === "huggingface" ? await loadProviderResult(job) : null;
+  const prediction: Prediction = persisted
+    ? { id: reference, status: "completed", outputs: [persisted] }
+    : await createProviderForJob(job).getGenerationStatus(reference);
+  if (job.provider === "huggingface" && !persisted && prediction.status === "completed")
+    for (const url of prediction.outputs.slice(0, 1)) await saveProviderResult(job, url);
   if (prediction.creditsUsed !== undefined)
     await updateJob(job.id, { provider_credits_milli: prediction.creditsUsed * 1000 });
   if (prediction.status === "failed") {
@@ -329,23 +425,39 @@ export async function pollGenerationAndTransfer(
   }
   if (prediction.outputs.length !== 1) throw new Error("Unexpected provider output count.");
   for (const [index, url] of prediction.outputs.entries()) {
-    const asset = await transferProviderOutput({
-      organizationId: job.organization_id,
-      jobId: job.id,
-      index,
-      url,
-      provider: job.provider,
-      providerReference: reference,
-      isVideo: job.operation === "video",
-      garmentId: job.garment_id ?? undefined,
-      actorId: job.created_by,
-      expiresAt:
-        job.operation === "try_on"
-          ? new Date(
-              Date.now() + (Number(process.env.CUSTOMER_PHOTO_RETENTION_HOURS) || 24) * 3_600_000,
-            ).toISOString()
-          : undefined,
-    });
+    let asset: Awaited<ReturnType<typeof transferProviderOutput>>;
+    try {
+      asset = await transferProviderOutput({
+        organizationId: job.organization_id,
+        jobId: job.id,
+        index,
+        url,
+        provider: job.provider,
+        providerReference: reference,
+        isVideo: job.operation === "video",
+        garmentId: job.garment_id ?? undefined,
+        actorId: job.created_by,
+        expiresAt:
+          job.operation === "try_on"
+            ? new Date(
+                Date.now() + (Number(process.env.CUSTOMER_PHOTO_RETENTION_HOURS) || 24) * 3_600_000,
+              ).toISOString()
+            : undefined,
+      });
+    } catch (error) {
+      // Untrusted, expired, oversized or unplayable media is final; it can never become a success.
+      if (error instanceof MediaValidationError) {
+        const state = await finishJob(
+          job.id,
+          false,
+          error instanceof ProviderOutputGoneError
+            ? "provider_output_expired"
+            : "provider_invalid_output",
+        );
+        return { state };
+      }
+      throw error;
+    }
     const { error } = await getAdminClient()
       .from("generation_outputs")
       .upsert(
@@ -424,9 +536,16 @@ export async function reconcileExhaustedGeneration(
   };
   if (
     job.provider_reference &&
-    (job.provider === "qwen" || job.error_code === "recovery_dispatch_pending")
+    (job.provider === "qwen" ||
+      job.provider === "huggingface" ||
+      job.error_code === "recovery_dispatch_pending")
   )
     return recoverAcceptedPrediction(job.provider_reference);
+  if (job.provider === "huggingface" && !job.provider_reference) {
+    // Receipts are recorded before the POST, so this job never reached the Space.
+    await finishJob(job.id, false, "provider_not_submitted");
+    return "failed";
+  }
   if (
     job.provider === "qwen" &&
     !job.provider_reference &&
@@ -520,7 +639,14 @@ export const generateFashionContent = inngest.createFunction(
     });
     // Durable sleeps do not occupy a Vercel invocation. Status + transfer step returns only safe ids/state.
     for (let poll = 0; poll < 100; poll++) {
-      await step.sleep(`wait-${poll}`, poll < 4 ? "15s" : "30s");
+      await step.sleep(
+        `wait-${poll}`,
+        poll === 0 && submitted.pollAfterSeconds
+          ? `${submitted.pollAfterSeconds}s`
+          : poll < 4
+            ? "15s"
+            : "30s",
+      );
       const result = await step.run(`poll-and-transfer-${poll}`, async () => {
         try {
           return await pollGenerationAndTransfer(jobId, submitted.id!);

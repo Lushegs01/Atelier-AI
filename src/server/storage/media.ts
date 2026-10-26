@@ -2,16 +2,17 @@ import "server-only";
 import { getQwenOutputRequest } from "@/server/ai/endpoint";
 import { huggingFaceOutputRequest } from "@/server/ai/huggingface";
 import { requestQwenPredictionDeletion } from "@/server/ai/cleanup";
-import { getConsentVersion } from "@/server/services/try-on";
+import { acceptedConsentVersions } from "@/server/services/try-on";
 import { createHash, randomUUID } from "node:crypto";
 import { getAdminClient } from "@/lib/supabase/admin";
 import {
   createThumbnail,
   MediaValidationError,
+  ProviderOutputGoneError,
   readBoundedBody,
   validateImage,
   validateProviderOutputUrl,
-  validateMp4Container,
+  validatePlayableMp4,
 } from "./validation";
 
 export { validateImage, createThumbnail } from "./validation";
@@ -256,7 +257,7 @@ async function assertCustomerSigningConsent(
     .select("id")
     .eq("organization_id", organizationId)
     .eq("try_on_session_id", session.id)
-    .eq("version", getConsentVersion(session.provider))
+    .in("version", acceptedConsentVersions(session.provider))
     .is("withdrawn_at", null)
     .limit(1)
     .maybeSingle();
@@ -303,6 +304,9 @@ export async function downloadAssetForProvider(input: {
   organizationId: string;
   assetId: string;
   minDimension?: number;
+  /** Width/height bounds; outside them the provider would crop or distort the photograph. */
+  minAspectRatio?: number;
+  maxAspectRatio?: number;
 }): Promise<string> {
   const admin = getAdminClient();
   const { data: asset, error } = await admin
@@ -317,12 +321,19 @@ export async function downloadAssetForProvider(input: {
     !asset ||
     !asset.mime_type.startsWith("image/") ||
     asset.width < (input.minDimension ?? 15) ||
-    asset.height < (input.minDimension ?? 15)
+    asset.height < (input.minDimension ?? 15) ||
+    (input.minAspectRatio !== undefined &&
+      asset.width / asset.height < input.minAspectRatio - 1e-6) ||
+    (input.maxAspectRatio !== undefined && asset.width / asset.height > input.maxAspectRatio + 1e-6)
   )
     throw new MediaValidationError(
       "This source image is incompatible with the selected generation.",
     );
-  return signAsset({ ...input, expiresIn: 900 });
+  return signAsset({
+    organizationId: input.organizationId,
+    assetId: input.assetId,
+    expiresIn: 900,
+  });
 }
 
 export async function transferProviderOutput(input: {
@@ -362,6 +373,8 @@ export async function transferProviderOutput(input: {
     signal: AbortSignal.timeout(50_000),
     cache: "no-store",
   });
+  // A missing output will not come back; anything else may be transient and is retried.
+  if (response.status === 404 || response.status === 410) throw new ProviderOutputGoneError();
   if (!response.ok) throw new Error("Provider output transfer failed.");
   const raw = await readBoundedBody(response, input.isVideo ? 100 * 1024 * 1024 : 30 * 1024 * 1024);
   if (!input.isVideo)
@@ -375,7 +388,7 @@ export async function transferProviderOutput(input: {
       jobId: input.jobId,
       expiresAt: input.expiresAt,
     });
-  validateMp4Container(raw);
+  validatePlayableMp4(raw);
   const storagePath = `${input.organizationId}/${id}/output.mp4`;
   const { error: intentError } = await admin.from("media_upload_intents").upsert(
     {

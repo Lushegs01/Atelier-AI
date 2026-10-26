@@ -73,7 +73,7 @@ export const recoverStuckGenerations = inngest.createFunction(
       const { data: pending, error: pendingError } = await admin
         .from("generation_jobs")
         .select("id,provider")
-        .eq("provider", "qwen")
+        .in("provider", ["qwen", "huggingface"])
         .eq("status", "retry_wait")
         .in("error_code", ["submission_ambiguous", "recovery_dispatch_pending"])
         .order("updated_at")
@@ -89,6 +89,19 @@ export const recoverStuckGenerations = inngest.createFunction(
         .order("updated_at")
         .limit(50);
       if (knownError) throw new Error("Known Qwen receipt inspection failed.");
+      // A Hugging Face receipt is read, never resubmitted. Two readers on one Space session would
+      // cancel the job when either disconnects, so only runs idle well beyond one worker's
+      // bounded reads and retries are recovered.
+      const { data: spaces, error: spacesError } = await admin
+        .from("generation_jobs")
+        .select("id,provider")
+        .eq("provider", "huggingface")
+        .in("status", ["submitting", "processing", "retry_wait"])
+        .not("provider_reference", "is", null)
+        .lt("updated_at", new Date(Date.now() - 30 * 60_000).toISOString())
+        .order("updated_at")
+        .limit(50);
+      if (spacesError) throw new Error("Known Hugging Face receipt inspection failed.");
       const { data: aged, error: agedError } = await admin
         .from("generation_jobs")
         .select("id,status,provider_reference,error_code")
@@ -97,14 +110,17 @@ export const recoverStuckGenerations = inngest.createFunction(
         .limit(100);
       if (agedError) throw new Error("Stuck generation inspection failed.");
       const recoverable = new Map(
-        [...(data ?? []), ...(pending ?? []), ...(known ?? [])].map((row) => [row.id, row]),
+        [...(data ?? []), ...(pending ?? []), ...(known ?? []), ...(spaces ?? [])].map((row) => [
+          row.id,
+          row,
+        ]),
       );
       return { ambiguous: [...recoverable.values()], aged: aged ?? [] };
     });
     const manual: string[] = [];
     for (const row of stuck.ambiguous) {
-      if (row.provider === "qwen") {
-        const recovered = await step.run(`recover-qwen-receipt-${row.id}`, () =>
+      if (row.provider === "qwen" || row.provider === "huggingface") {
+        const recovered = await step.run(`recover-${row.provider}-receipt-${row.id}`, () =>
           reconcileExhaustedGeneration(row.id),
         );
         if (recovered !== "manual") continue;

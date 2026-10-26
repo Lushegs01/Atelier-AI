@@ -1,6 +1,6 @@
 # Atelier AI
 
-A modular Next.js fashion-content application with Supabase authentication, PostgreSQL tenant isolation, private media, operator-hosted Qwen Image Edit, durable Inngest jobs and Paystack prepaid credits. FASHN remains an optional separately configured adapter.
+A modular Next.js fashion-content application with Supabase authentication, PostgreSQL tenant isolation, private media, free Hugging Face Spaces for AI photos, try-on and video, durable Inngest jobs and Paystack prepaid credits. Operator-hosted Qwen Image Edit and FASHN remain separately configured alternatives.
 
 **Status:** implemented for local verification and controlled staging setup. No external credentials were supplied. No live payment, AI generation or deployment has been verified. All model capabilities and draft price rules are disabled by default. Do not launch until the [release checklist](docs/RELEASE-CHECKLIST.md) passes.
 
@@ -34,11 +34,13 @@ npm run db:migrate
 
 Never point a reset command at production. The remote migration creates tables and catalog rows; local `seed.sql` is for CLI resets. Configure Supabase email verification, SMTP, redirect allowlists and abuse controls. Add the Supabase URL, public key and server-only service credential to `.env.local` using `.env.example`. See [database setup](docs/DATABASE.md).
 
-The default `AI_PROVIDER=qwen` uses `Qwen/Qwen-Image-Edit-2511` through a separate GPU inference service. Its [Apache-2.0 weights](https://huggingface.co/Qwen/Qwen-Image-Edit-2511) do not include free compute or hosting. No paid model-provider account is required for this path; you must supply a compatible GPU host or GPU machine. This PC’s Intel Iris Xe is not the CUDA GPU runtime required by the supplied service. No actual model inference has been performed here.
+The default `AI_PROVIDER=huggingface` runs free public ZeroGPU Spaces with a server-only, read-only `HF_TOKEN` from a free Hugging Face account: [Qwen Image Edit Fast](https://huggingface.co/spaces/multimodalart/Qwen-Image-Edit-Fast) for photographs, [Leffa](https://huggingface.co/spaces/franciszzj/Leffa) for try-on and [Wan 2.2 Fast](https://huggingface.co/spaces/zerogpu-aoti/wan2-2-fp8da-aoti-faster) for 5-second video. Apply migrations `202610250002` and `202610260001`, then enable reviewed prices and the flags you have accepted. Designers acknowledge third-party processing per request; customers consent on their invitation page. Quota, recovery, privacy and testing are described in [AI providers](docs/AI-PROVIDERS.md#free-hugging-face-spaces); the [verification record](docs/HUGGINGFACE-VERIFICATION.md) states exactly what was and was not checked live. No inference has been run from this repository's verification so far.
+
+The alternative `AI_PROVIDER=qwen` uses `Qwen/Qwen-Image-Edit-2511` through a separate GPU inference service. Its [Apache-2.0 weights](https://huggingface.co/Qwen/Qwen-Image-Edit-2511) do not include free compute or hosting. No paid model-provider account is required for this path; you must supply a compatible GPU host or GPU machine. This PC’s Intel Iris Xe is not the CUDA GPU runtime required by the supplied service. No actual model inference has been performed here.
 
 Provision the service using [the inference guide](inference/qwen/README.md), protect it with a random shared token, and set `QWEN_API_URL` plus `QWEN_API_KEY` in the web app. The same token must be injected into the GPU service. `QWEN_API_KEY` is your own service credential, not a purchased vendor API key. Use HTTPS; the explicit insecure-local exception is development-only. Enable photographs only after an authorized real-output acceptance test. Customer visualization has a separate experimental flag and is not a validated fitting model. **Qwen cannot generate video.**
 
-**Free option without a GPU:** set `AI_PROVIDER=huggingface` and a free Hugging Face read token as `HF_TOKEN`. Jobs then run on public ZeroGPU Spaces within that account's daily GPU quota: photos, customer try-on and 5-second 480p video. Run `npm run db:migrate` so the database accepts the provider, then enable its reviewed prices. See [AI providers](docs/AI-PROVIDERS.md#free-hugging-face-spaces). The [imported branch report](docs/HUGGINGFACE-VERIFICATION.md) records the original live check.
+Opt-in live provider check (spends real quota, never in CI): `HF_LIVE_SMOKE=1 HF_TOKEN=hf_... npm run smoke:hf -- photo`.
 
 Configure Inngest credentials, then run the official Inngest dev server:
 

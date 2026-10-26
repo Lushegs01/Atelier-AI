@@ -42,6 +42,8 @@ export interface Job {
   estimated_credits?: number;
   reserved_credits?: number;
   error_message?: string;
+  error_code?: string | null;
+  source_asset_id?: string | null;
   options?: Record<string, unknown>;
   provider_model?: string;
   provider?: PublicProviderId;
@@ -54,6 +56,8 @@ export interface Output {
   asset?: Asset;
   created_at?: string;
   operation?: string;
+  approved_at?: string | null;
+  rejected_at?: string | null;
 }
 export interface LedgerEntry {
   id: string;

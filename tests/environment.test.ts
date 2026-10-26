@@ -13,7 +13,7 @@ describe("release configuration", () => {
     expect(env.ENABLE_PHOTO_GENERATION).toBe(false);
     expect(env.ENABLE_VIDEO_GENERATION).toBe(false);
     expect(env.ENABLE_TRY_ON).toBe(false);
-    expect(env.AI_PROVIDER).toBe("qwen");
+    expect(env.AI_PROVIDER).toBe("huggingface");
   });
   it("requires a Hugging Face token only when that provider is selected", () => {
     const base = { NODE_ENV: "test", ENABLE_TRY_ON: "true", AI_PROVIDER: "huggingface" };

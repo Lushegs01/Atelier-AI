@@ -8,12 +8,15 @@ import {
   videoOptionsSchema,
   tryOnOptionsSchema,
   unsupportedOptionMessage,
+  sourceShapeMessage,
 } from "@/server/ai/contracts";
+import { HF_PROCESSING_DISCLOSURE_VERSION } from "@/server/ai/huggingface";
 import { getProviderCapabilities } from "@/server/ai/registry";
 import { quoteGeneration, reserveGeneration } from "@/server/billing/service";
 import { dispatchGeneration } from "@/workers/client";
 import { assertDatabaseResult } from "./http";
 import { createQuoteToken, verifyQuoteToken } from "./quotes";
+import { assertProviderQuotaAvailable } from "./provider-health";
 
 export const generationInputSchema = z
   .object({
@@ -24,6 +27,8 @@ export const generationInputSchema = z
     options: z.record(z.string(), z.unknown()).default({}),
     idempotencyKey: z.string().min(8).max(200).optional(),
     quoteToken: z.string().max(4096).optional(),
+    /** Disclosure version the designer accepted before sending photographs to a public Space. */
+    processingAcknowledgement: z.string().max(64).optional(),
   })
   .strict();
 
@@ -62,6 +67,7 @@ export async function submitDesignerGeneration(raw: unknown, quoteOnly = false) 
   const options = parseGenerationOptions(input.operation, input.options);
   const unsupported = unsupportedOptionMessage(capability, options);
   if (unsupported) throw new ApiError(422, unsupported, "OPTION_UNSUPPORTED");
+  if (capability.provider) await assertProviderQuotaAvailable(capability.provider);
   await consumeRateLimit(`generation:${tenant.organizationId}`, quoteOnly ? 60 : 15, 60);
   if (!input.garmentId && input.operation !== "video")
     throw new ApiError(422, "Select a garment first.", "GARMENT_REQUIRED");
@@ -100,16 +106,14 @@ export async function submitDesignerGeneration(raw: unknown, quoteOnly = false) 
         "Upload a front, mannequin, hanger, or flat-lay garment photograph.",
         "SOURCE_INCOMPATIBLE",
       );
-    if (
-      source.width < capability.minInputDimension ||
-      source.height < capability.minInputDimension ||
-      (capability.provider === "qwen" && source.byte_size > 4 * 1024 * 1024)
-    )
+    if (capability.provider === "qwen" && source.byte_size > 4 * 1024 * 1024)
       throw new ApiError(
         422,
-        `Choose a source photograph at least ${capability.minInputDimension} pixels wide and high${capability.provider === "qwen" ? ", up to 4 MB" : ""}.`,
+        `Choose a source photograph at least ${capability.minInputDimension} pixels wide and high, up to 4 MB.`,
         "SOURCE_INCOMPATIBLE",
       );
+    const shape = sourceShapeMessage(capability, source.width, source.height);
+    if (shape) throw new ApiError(422, shape, "SOURCE_INCOMPATIBLE");
     sourceId = source.id;
   } else {
     if (!sourceId)
@@ -133,6 +137,8 @@ export async function submitDesignerGeneration(raw: unknown, quoteOnly = false) 
         "Choose a compatible photograph at least 301 pixels wide and high.",
         "SOURCE_INCOMPATIBLE",
       );
+    const shape = sourceShapeMessage(capability, asset.width, asset.height);
+    if (shape) throw new ApiError(422, shape, "SOURCE_INCOMPATIBLE");
     if (asset.kind === "generated_image") {
       const { data: parent, error: parentError } = await tenant.client
         .from("generation_jobs")
@@ -194,6 +200,20 @@ export async function submitDesignerGeneration(raw: unknown, quoteOnly = false) 
   if (!input.idempotencyKey)
     throw new ApiError(422, "A request identifier is required.", "IDEMPOTENCY_REQUIRED");
   const confirmed = verifyQuoteToken(input.quoteToken, quoteContext);
+  // Public Spaces are third-party processors; the designer must acknowledge that before sending.
+  const acknowledged =
+    confirmed.provider === "huggingface"
+      ? { processingDisclosure: HF_PROCESSING_DISCLOSURE_VERSION }
+      : {};
+  if (
+    confirmed.provider === "huggingface" &&
+    input.processingAcknowledgement !== HF_PROCESSING_DISCLOSURE_VERSION
+  )
+    throw new ApiError(
+      422,
+      "Review and accept the third-party processing notice before generating.",
+      "PROCESSING_ACKNOWLEDGEMENT_REQUIRED",
+    );
   const job = await reserveGeneration({
     organizationId: tenant.organizationId,
     actorId: tenant.user.id,
@@ -201,7 +221,7 @@ export async function submitDesignerGeneration(raw: unknown, quoteOnly = false) 
     garmentId: input.garmentId,
     sourceAssetId: sourceId,
     inputAssetIds: sourceId ? [sourceId] : [],
-    options,
+    options: { ...options, ...acknowledged },
     idempotencyKey: input.idempotencyKey,
     expectedCredits: confirmed.credits,
     expectedPriceRuleId: confirmed.priceRuleId,

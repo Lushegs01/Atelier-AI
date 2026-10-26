@@ -3,7 +3,16 @@ import { z } from "zod";
 export const generationOperationSchema = z.enum(["photo", "video", "try_on"]);
 export type GenerationOperation = z.infer<typeof generationOperationSchema>;
 
+/**
+ * Prompt presets for the same image-editing model. They change the written direction only; they
+ * are not separate model capabilities.
+ */
+export const photoDirectionSchema = z.enum(["faithful", "editorial", "lifestyle", "product"]);
+/** Restrained motion presets for image-to-video; garment consistency is never guaranteed. */
+export const motionPresetSchema = z.enum(["subtle", "fabric", "camera"]);
+
 export const imageOptionsSchema = z.object({
+  direction: photoDirectionSchema.default("editorial"),
   scene: z.string().max(300).default("Soft daylight photography studio"),
   model: z.string().max(200).default("Adult fashion model"),
   pose: z.string().max(150).default("Natural standing pose"),
@@ -22,6 +31,8 @@ export const videoOptionsSchema = z.object({
   duration: z.union([z.literal(5), z.literal(10)]).default(5),
   resolution: z.enum(["480p", "720p", "1080p"]).default("1080p"),
   motion: z.string().max(180).default(""),
+  motionPreset: motionPresetSchema.default("subtle"),
+  seed: z.number().int().min(0).max(4_294_967_295).default(42),
 });
 
 export const tryOnOptionsSchema = z.object({
@@ -57,6 +68,14 @@ export interface ProviderCapability {
   /** Option values the provider can honour. Absent means every schema value is supported. */
   supportedResolutions?: readonly string[];
   supportedDurations?: readonly number[];
+  /**
+   * Accepted width/height range of the primary photograph (garment for photos, start frame for
+   * video, person for try-on). Outside it the provider would crop or distort the image.
+   */
+  minAspectRatio?: number;
+  maxAspectRatio?: number;
+  /** False when only server-owned motion presets are accepted for video. */
+  freeTextMotion?: boolean;
   reason?: string;
   notes?: string;
 }
@@ -66,6 +85,8 @@ export interface GenerationContext {
   requestId: string;
   /** Garment category, for adapters whose try-on weights differ by garment type. */
   garmentCategory?: string;
+  /** Submission attempt; adapters with caller-chosen receipts derive a distinct one per attempt. */
+  attempt?: number;
 }
 
 export interface FashionProvider {
@@ -119,8 +140,10 @@ export function requireEnabledCapability(
 /** Returns a customer-safe explanation when the provider cannot honour a requested option. */
 export function unsupportedOptionMessage(
   capability: ProviderCapability,
-  options: { resolution?: string; duration?: number },
+  options: { resolution?: string; duration?: number; motion?: string },
 ): string | null {
+  if (capability.freeTextMotion === false && options.motion?.trim())
+    return "The configured AI provider accepts the listed motion presets only.";
   if (
     options.resolution &&
     capability.supportedResolutions &&
@@ -134,6 +157,29 @@ export function unsupportedOptionMessage(
   )
     return `The configured AI provider supports ${capability.supportedDurations.join(", ")}-second videos only.`;
   return null;
+}
+
+/** Returns a customer-safe explanation when a photograph's shape is unsuitable for the provider. */
+export function sourceShapeMessage(
+  capability: ProviderCapability,
+  width: number,
+  height: number,
+): string | null {
+  if (width < capability.minInputDimension || height < capability.minInputDimension)
+    return `Choose a photograph at least ${capability.minInputDimension} pixels wide and high.`;
+  const ratio = width / height;
+  if (
+    (capability.minAspectRatio !== undefined && ratio < capability.minAspectRatio - 1e-6) ||
+    (capability.maxAspectRatio !== undefined && ratio > capability.maxAspectRatio + 1e-6)
+  )
+    return capability.operation === "try_on"
+      ? "Use a portrait or square photograph of the person (taller than it is wide, up to 1:1)."
+      : `Choose a photograph between ${formatRatio(capability.minAspectRatio)} and ${formatRatio(capability.maxAspectRatio)} (width:height). The model would otherwise crop away part of the garment.`;
+  return null;
+}
+
+function formatRatio(value?: number) {
+  return value === undefined ? "any" : `${Math.round(value * 100) / 100}:1`;
 }
 
 /** Provider billing units, not the customer's Atelier credit price. */

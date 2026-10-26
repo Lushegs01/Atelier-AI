@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "smoke:hf": "tsx --conditions=react-server scripts/hf-live-smoke.ts",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "scan:secrets": "node scripts/scan-secrets.mjs",
     "db:validate": "vitest run tests/database",

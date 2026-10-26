@@ -723,7 +723,11 @@ describe("free Hugging Face provider", () => {
   });
   it("reserves a reviewed Hugging Face price pinned to its provider and model", async () => {
     await enableHuggingFace();
-    const job = await reserve({ provider: "huggingface", key: "hf-photo-reservation" });
+    const job = await reserve({
+      provider: "huggingface",
+      key: "hf-photo-reservation",
+      options: { processingDisclosure: "2026-10-26-hf-spaces-v1" },
+    });
     expect(job).toMatchObject({
       provider: "huggingface",
       provider_model: "Qwen/Qwen-Image-Edit",
@@ -735,7 +739,11 @@ describe("free Hugging Face provider", () => {
   it("rejects image options the Spaces cannot honour before reserving credits", async () => {
     await enableHuggingFace();
     await expect(
-      reserve({ provider: "huggingface", key: "hf-photo-4k", options: { resolution: "4k" } }),
+      reserve({
+        provider: "huggingface",
+        key: "hf-photo-4k",
+        options: { resolution: "4k", processingDisclosure: "2026-10-26-hf-spaces-v1" },
+      }),
     ).rejects.toThrow(/options unsupported/i);
   });
   it("allows only the 1K image and 5-second 480p video price rows", async () => {
@@ -770,10 +778,84 @@ describe("free Hugging Face provider", () => {
       "insert into consents(organization_id,try_on_session_id,version) values($1,$2,'2026-10-25-huggingface-v1')",
       [ids.orgA, ids.session],
     );
+    // The superseded disclosure no longer authorizes processing.
+    await db.exec("savepoint before_hf_v1");
+    await expect(reserve(guest)).rejects.toThrow(/consent required/i);
+    await db.exec("rollback to savepoint before_hf_v1");
+    await db.query(
+      "insert into consents(organization_id,try_on_session_id,version) values($1,$2,'2026-10-26-huggingface-v2')",
+      [ids.orgA, ids.session],
+    );
     expect(await reserve(guest)).toMatchObject({
       provider: "huggingface",
       provider_model: "franciszzj/Leffa",
     });
+  });
+});
+
+describe("Hugging Face third-party processing safeguards", () => {
+  it("refuses a designer reservation without the current processing acknowledgement", async () => {
+    await db.exec(
+      "update generation_price_rules set enabled=true,reviewed_at=now() where provider='huggingface'",
+    );
+    for (const options of [{}, { processingDisclosure: "2026-01-01-outdated" }]) {
+      await db.exec("savepoint before_ack");
+      await expect(reserve({ provider: "huggingface", key: "hf-no-ack", options })).rejects.toThrow(
+        /acknowledgement required/i,
+      );
+      await db.exec("rollback to savepoint before_ack");
+    }
+    expect(await account()).toEqual({ available: 100, reserved: 0 });
+    const job = await reserve({
+      provider: "huggingface",
+      key: "hf-with-ack",
+      options: { processingDisclosure: "2026-10-26-hf-spaces-v1" },
+    });
+    const audit = await db.query<{ metadata: Record<string, unknown> }>(
+      "select metadata from audit_logs where target_id=$1 and action='generation.reserved'",
+      [job.id],
+    );
+    expect(audit.rows[0].metadata).toMatchObject({
+      provider: "huggingface",
+      processingDisclosure: "2026-10-26-hf-spaces-v1",
+    });
+  });
+
+  it("keeps recorded Space results private to the service role and limited to Space URLs", async () => {
+    await db.exec(
+      "update generation_price_rules set enabled=true,reviewed_at=now() where provider='huggingface'",
+    );
+    const job = await reserve({
+      provider: "huggingface",
+      key: "hf-result-row",
+      options: { processingDisclosure: "2026-10-26-hf-spaces-v1" },
+    });
+    await db.exec("savepoint before_bad_url");
+    await expect(
+      db.query(
+        "insert into generation_provider_results(job_id,organization_id,output_url) values($1,$2,'https://attacker.example/x.webp')",
+        [job.id, ids.orgA],
+      ),
+    ).rejects.toThrow(/check/i);
+    await db.exec("rollback to savepoint before_bad_url");
+    await db.query(
+      "insert into generation_provider_results(job_id,organization_id,output_url) values($1,$2,'https://franciszzj-leffa.hf.space/gradio_api/file=/tmp/a.webp')",
+      [job.id, ids.orgA],
+    );
+    for (const [user, role] of [
+      [ids.ownerA, "authenticated"],
+      [ids.stranger, "anon"],
+    ]) {
+      await db.exec("savepoint before_private_read");
+      await asUser(user, role);
+      await expect(db.query("select * from generation_provider_results")).rejects.toThrow(
+        /permission denied/i,
+      );
+      await db.exec("rollback to savepoint before_private_read");
+    }
+    await db.exec("reset role");
+    const rows = await db.query("select job_id from generation_provider_results");
+    expect(rows.rows).toHaveLength(1);
   });
 });
 
