@@ -19,16 +19,20 @@ it("upgrades existing FASHN jobs and invitations without rerouting, repricing or
       insert into organizations(id,name,created_by) values('20000000-0000-4000-8000-000000000001','Legacy workspace','10000000-0000-4000-8000-000000000001');
       insert into credit_accounts(organization_id,available,reserved) values('20000000-0000-4000-8000-000000000001',88,12);
       insert into garments(id,organization_id,name) values('30000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','Legacy garment');
-      insert into generation_price_rules(id,operation,credits,provider_model,provider_credits_milli,enabled,reviewed_at) values
-        ('40000000-0000-4000-8000-000000000001','photo',12,'product-to-model',2000,true,now()),
-        ('40000000-0000-4000-8000-000000000002','try_on',12,'tryon-max',2000,true,now());
+      insert into generation_price_rules(id,operation,option_key,credits,provider_model,provider_credits_milli,enabled,reviewed_at) values
+        ('40000000-0000-4000-8000-000000000001','photo','default',12,'product-to-model',2000,true,now()),
+        ('40000000-0000-4000-8000-000000000002','try_on','default',12,'tryon-max',2000,true,now()),
+        ('40000000-0000-4000-8000-000000000003','try_on','legacy',10,'tryon-v1.6',2000,false,null);
       insert into generation_jobs(id,organization_id,operation,status,estimated_credits,price_rule_id,provider_model,provider_reference,idempotency_key) values
         ('50000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','photo','processing',12,'40000000-0000-4000-8000-000000000001','product-to-model','legacy-provider-prediction','legacy-idempotency-key');
       insert into credit_ledger(organization_id,kind,available_delta,reserved_delta,idempotency_key) values
         ('20000000-0000-4000-8000-000000000001','adjustment',100,0,'legacy-opening-balance'),
         ('20000000-0000-4000-8000-000000000001','reserve',-12,12,'legacy-reserve');
       insert into try_on_sessions(id,organization_id,garment_id,token_hash,expires_at,quoted_credits,price_rule_id) values
-        ('60000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000001',repeat('a',64),now()+interval '1 day',12,'40000000-0000-4000-8000-000000000002');
+        ('60000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000001',repeat('a',64),now()+interval '1 day',12,'40000000-0000-4000-8000-000000000002'),
+        -- A legacy invitation priced by a rule whose model is not tryon-max, as found on a real database.
+        ('60000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000001',repeat('b',64),now()-interval '1 day',10,'40000000-0000-4000-8000-000000000003'),
+        ('60000000-0000-4000-8000-000000000003','20000000-0000-4000-8000-000000000001','30000000-0000-4000-8000-000000000001',repeat('c',64),now()-interval '1 day',null,null);
     `);
     await db.exec(
       readFileSync(resolve("supabase/migrations/202610250001_provider_pinning.sql"), "utf8"),
@@ -51,10 +55,18 @@ it("upgrades existing FASHN jobs and invitations without rerouting, repricing or
       available: 88,
       reserved: 12,
     });
+    // Each invitation stays pinned to the model of the price it was quoted with.
     expect(
-      (await db.query("select provider,provider_model,quoted_credits from try_on_sessions"))
-        .rows[0],
-    ).toEqual({ provider: "fashn", provider_model: "tryon-max", quoted_credits: 12 });
+      (
+        await db.query(
+          "select provider,provider_model,quoted_credits from try_on_sessions order by id",
+        )
+      ).rows,
+    ).toEqual([
+      { provider: "fashn", provider_model: "tryon-max", quoted_credits: 12 },
+      { provider: "fashn", provider_model: "tryon-v1.6", quoted_credits: 10 },
+      { provider: "fashn", provider_model: "tryon-max", quoted_credits: null },
+    ]);
     expect((await db.query("select id from credit_ledger")).rows).toHaveLength(2);
     expect(
       (

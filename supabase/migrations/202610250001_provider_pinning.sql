@@ -9,6 +9,9 @@ alter table public.generation_jobs add constraint generation_jobs_private_infere
 create index generation_jobs_pending_inference_deletion_idx on public.generation_jobs(inference_delete_requested_at) where inference_delete_requested_at is not null and inference_delete_completed_at is null;
 alter table public.try_on_sessions add column provider text not null default 'fashn' check(provider in ('fashn','qwen'));
 alter table public.try_on_sessions add column provider_model text not null default 'tryon-max';
+-- Existing invitations keep the model of the price they were quoted with; the default covers only
+-- unpriced rows. Without this, an invitation priced by any non-tryon-max rule fails the key below.
+update public.try_on_sessions s set provider_model=r.provider_model from public.generation_price_rules r where r.id=s.price_rule_id and s.provider_model is distinct from r.provider_model;
 
 alter table public.generation_price_rules drop constraint generation_price_rules_operation_option_key_key;
 alter table public.generation_price_rules add constraint generation_price_rules_provider_operation_option_key_key unique(provider,operation,option_key);
